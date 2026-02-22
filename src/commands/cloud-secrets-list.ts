@@ -27,7 +27,7 @@
  */
 
 import { getContext } from '../context';
-import type { CloudProvider } from '@tsdevstack/cli/plugin';
+import type { CloudProvider } from 'tsdevstack/plugin';
 import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';
 import { createGCPClient } from '../utils/gcp/client-factory';
 import { listSecretsWithKeys as listGCPSecretsWithKeys } from '../utils/gcp/list-secrets-with-keys';

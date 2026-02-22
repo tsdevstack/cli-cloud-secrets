@@ -27,7 +27,7 @@
 
 import { execSync } from 'node:child_process';
 import { getContext } from '../context';
-import type { CloudProvider } from '@tsdevstack/cli/plugin';
+import type { CloudProvider } from 'tsdevstack/plugin';
 import type { AzureCredentials } from '../utils/types';
 import inquirer from 'inquirer';
 import { cloudSecretsPush } from './cloud-secrets-push';

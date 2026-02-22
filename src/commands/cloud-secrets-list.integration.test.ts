@@ -1,5 +1,5 @@
 import { describe, it, expect, rs, beforeEach, afterEach } from '@rstest/core';
-import type { PluginContext } from '@tsdevstack/cli/plugin';
+import type { PluginContext } from 'tsdevstack/plugin';
 import type { MockContext } from '../test-utils/mock-context';
 import { cloudSecretsList } from './cloud-secrets-list';
 

@@ -8,7 +8,7 @@ export type {
   GCPCredentials,
   AWSCredentials,
   AzureCredentials,
-} from '@tsdevstack/cli/plugin';
+} from 'tsdevstack/plugin';
 
 /**
  * Environment test result

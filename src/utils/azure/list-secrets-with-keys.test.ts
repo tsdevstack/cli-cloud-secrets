@@ -1,5 +1,5 @@
 import { describe, it, expect, rs, beforeEach } from '@rstest/core';
-import type { PluginContext } from '@tsdevstack/cli/plugin';
+import type { PluginContext } from 'tsdevstack/plugin';
 import { listSecretsWithKeys } from './list-secrets-with-keys';
 
 rs.mock('../../context', () => {

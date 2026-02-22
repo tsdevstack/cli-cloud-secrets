@@ -44,7 +44,7 @@
     "test": "rstest run"
   },
   "peerDependencies": {
-    "@tsdevstack/cli": "0.0.1",
+    "tsdevstack": "0.0.1",
     "commander": "^12.0.0"
   },
   "dependencies": {
