@@ -21,7 +21,7 @@ export type {
   GCPCredentials,
   AWSCredentials,
   AzureCredentials,
-} from 'tsdevstack/plugin';
+} from '@tsdevstack/cli/plugin';
 
 // Import types needed for CommandContext definition
 import type {
@@ -31,7 +31,7 @@ import type {
   FrameworkConfig,
   SecretsFile,
   CloudProvider,
-} from 'tsdevstack/plugin';
+} from '@tsdevstack/cli/plugin';
 
 /**
  * CommandContext - all utilities injected from cli-core

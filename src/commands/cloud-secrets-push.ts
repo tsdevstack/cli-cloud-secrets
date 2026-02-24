@@ -30,7 +30,7 @@
 
 import path from 'node:path';
 import { getContext } from '../context';
-import type { CloudProvider } from 'tsdevstack/plugin';
+import type { CloudProvider } from '@tsdevstack/cli/plugin';
 import inquirer from 'inquirer';
 import { cloudSecretsSet } from './cloud-secrets-set';
 import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';

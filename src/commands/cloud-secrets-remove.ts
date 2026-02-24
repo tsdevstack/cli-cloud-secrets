@@ -33,7 +33,7 @@
  */
 
 import { getContext } from '../context';
-import type { CloudProvider, SecretsFile } from 'tsdevstack/plugin';
+import type { CloudProvider, SecretsFile } from '@tsdevstack/cli/plugin';
 import inquirer from 'inquirer';
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';

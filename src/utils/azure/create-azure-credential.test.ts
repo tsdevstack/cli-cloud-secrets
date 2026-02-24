@@ -1,5 +1,5 @@
 import { describe, it, expect, rs, beforeEach } from '@rstest/core';
-import type { MockContext } from 'tsdevstack/test-utils';
+import type { MockContext } from '@tsdevstack/cli/test-utils';
 
 const mocks = (globalThis as unknown as { contextMocks: MockContext })
   .contextMocks;

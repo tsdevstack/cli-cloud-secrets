@@ -17,7 +17,7 @@
  */
 
 import { getContext } from '../context';
-import type { CloudProvider } from 'tsdevstack/plugin';
+import type { CloudProvider } from '@tsdevstack/cli/plugin';
 import inquirer from 'inquirer';
 import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';
 import { createGCPClient } from '../utils/gcp/client-factory';
