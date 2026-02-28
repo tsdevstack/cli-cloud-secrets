@@ -43,6 +43,9 @@ import { loadAzureCredentials } from '../utils/azure/load-azure-credentials';
 import { createAzureClient } from '../utils/azure/create-azure-client';
 import { secretExists as secretExistsAzure } from '../utils/azure/secret-exists';
 import { transformKeyForAzure } from '../utils/azure/set-secret';
+import { getSecret as getGCPSecret } from '../utils/gcp/get-secret';
+import { getSecret as getAWSSecret } from '../utils/aws/get-secret';
+import { getSecret as getAzureSecret } from '../utils/azure/get-secret';
 
 /** Keys pushed as framework secrets with defaults (no prompt needed) */
 const FRAMEWORK_DEFAULT_KEYS = [
@@ -297,11 +300,117 @@ export async function cloudSecretsPush(options: {
   // Step 7.5: Push user secrets (prompting only for truly user-specific ones)
   // Skip this step if --skip-user-secrets flag is set (for CI)
   if (options.skipUserSecrets) {
-    logger.info('Skipping user secrets (--skip-user-secrets flag)');
+    logger.info('Skipping user secret prompts (--skip-user-secrets flag)');
     logger.newline();
-    logger.info(`User secrets must be set manually before first deployment:`);
+
+    // Even with --skip-user-secrets, auto-derive domain-dependent secrets
+    // if DOMAIN already exists in the cloud (set via cloud-secrets:set or previous push)
+    const { buildSecretName, readJsonFile, TSDEVSTACK_DIR } = getContext();
+    const domainSecretName = buildSecretName(
+      config.project.name,
+      'shared',
+      'DOMAIN',
+    );
+
+    let domainValue: string | null = null;
+
+    try {
+      if (provider === 'gcp') {
+        const credentials = loadGCPCredentials(projectRoot, selectedEnv);
+        const client = createGCPClient(credentials);
+        const fullSecretName = `projects/${credentials.project_id}/secrets/${domainSecretName}`;
+        domainValue = await getGCPSecret(client, fullSecretName);
+      } else if (provider === 'aws') {
+        const credentials = loadAWSCredentials(projectRoot, selectedEnv);
+        const client = createAWSClient(credentials);
+        domainValue = await getAWSSecret(client, domainSecretName);
+      } else if (provider === 'azure') {
+        const credentials = loadAzureCredentials(projectRoot, selectedEnv);
+        const client = createAzureClient(
+          credentials,
+          config.project.name,
+          selectedEnv,
+        );
+        const azureSecretName = transformKeyForAzure(domainSecretName);
+        domainValue = await getAzureSecret(client, azureSecretName);
+      }
+    } catch {
+      logger.warn('Could not read DOMAIN from cloud (non-fatal)');
+    }
+
+    if (domainValue) {
+      logger.generating(
+        'Auto-deriving domain-dependent secrets from existing DOMAIN...',
+      );
+      logger.newline();
+
+      const apiUrl = `https://api.${domainValue}`;
+
+      let appUrl = `https://${domainValue}`;
+      let infraConfig: Record<string, unknown> | null = null;
+
+      try {
+        const infraConfigPath = path.join(
+          projectRoot,
+          TSDEVSTACK_DIR,
+          'infrastructure.json',
+        );
+        infraConfig = readJsonFile<Record<string, unknown>>(infraConfigPath);
+      } catch {
+        // infrastructure.json may not exist yet
+      }
+
+      if (infraConfig) {
+        const domains = extractDomainsFromInfraConfig(infraConfig, selectedEnv);
+        if (domains.length > 0) {
+          appUrl = `https://${domains[0]}`;
+        }
+      }
+
+      let corsOrigins = `https://${domainValue}`;
+      if (infraConfig) {
+        const domains = extractDomainsFromInfraConfig(infraConfig, selectedEnv);
+        if (domains.length > 0) {
+          corsOrigins = domains.map((d) => `https://${d}`).join(',');
+        }
+      }
+
+      const derivedSecrets: Array<{ key: string; value: string }> = [
+        { key: 'API_URL', value: apiUrl },
+        { key: 'APP_URL', value: appUrl },
+        { key: 'KONG_CORS_ORIGINS', value: corsOrigins },
+      ];
+
+      for (const { key, value } of derivedSecrets) {
+        try {
+          await cloudSecretsSet(key, undefined, {
+            value,
+            env: selectedEnv,
+            overwrite: false,
+            internal: true,
+          });
+          logger.success(`   ${key} = ${value}`);
+        } catch {
+          // overwrite: false will warn and skip if exists
+        }
+      }
+
+      logger.newline();
+    } else {
+      logger.warn(
+        'DOMAIN not set in cloud — skipping domain-dependent secrets',
+      );
+      logger.info(
+        `Set DOMAIN first: npx tsdevstack cloud-secrets:set DOMAIN <domain> --env ${selectedEnv}`,
+      );
+      logger.newline();
+    }
+
+    logger.info(
+      'Other user secrets must be set manually before first deployment:',
+    );
     logger.info(`  npx tsdevstack cloud-secrets:push --env ${selectedEnv}`);
-    logger.info(`  Or set directly in cloud provider console`);
+    logger.info('  Or set directly in cloud provider console');
     logger.newline();
   } else if (Object.keys(userSecrets).length > 0) {
     logger.updating('User secrets (checking existing, prompting for new)...');
@@ -471,14 +580,29 @@ export async function cloudSecretsPush(options: {
         logger.success(`   Already exists in ${selectedEnv}`);
         logger.newline();
         counters.existing++;
-        // DOMAIN exists but we don't know its value — derived secrets
-        // will also be checked for existence so this is fine
-        domainValue = 'existing';
+        // Read actual DOMAIN value to derive dependent secrets
+        const domainSecretName = buildSecretName(
+          config.project.name,
+          'shared',
+          'DOMAIN',
+        );
+        if (provider === 'gcp' && gcpClient && gcpCredentials) {
+          const fullSecretName = `projects/${gcpCredentials.project_id}/secrets/${domainSecretName}`;
+          domainValue =
+            (await getGCPSecret(gcpClient, fullSecretName)) ?? undefined;
+        } else if (provider === 'aws' && awsClient) {
+          domainValue =
+            (await getAWSSecret(awsClient, domainSecretName)) ?? undefined;
+        } else if (provider === 'azure' && azureClient) {
+          const azureSecretName = transformKeyForAzure(domainSecretName);
+          domainValue =
+            (await getAzureSecret(azureClient, azureSecretName)) ?? undefined;
+        }
       }
     }
 
     // Step B: Auto-derive and push domain-dependent secrets
-    if (domainValue && domainValue !== 'existing') {
+    if (domainValue) {
       logger.generating('Auto-deriving domain-dependent secrets...');
       logger.newline();
 
