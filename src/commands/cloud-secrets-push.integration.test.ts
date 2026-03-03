@@ -269,7 +269,7 @@ describe('cloudSecretsPush', () => {
       expect(cloudSecretsSet).toHaveBeenCalledTimes(8);
     });
 
-    it('should handle framework push failures', async () => {
+    it('should exit with error when framework push has failures', async () => {
       mocks.generateFrameworkSecretsFile.mockReturnValue({
         secrets: {
           SECRET_1: 'value-1',
@@ -283,9 +283,11 @@ describe('cloudSecretsPush', () => {
         .mockRejectedValueOnce(new Error('Permission denied')) // SECRET_2
         .mockResolvedValue(undefined); // all remaining
 
-      await cloudSecretsPush({ env: 'dev' });
+      await expect(cloudSecretsPush({ env: 'dev' })).rejects.toThrow(
+        'process.exit',
+      );
 
-      expect(mocks.logger.success).toHaveBeenCalledWith('   Pushed: 6');
+      expect(processExitSpy).toHaveBeenCalledWith(1);
       expect(mocks.logger.error).toHaveBeenCalledWith('   Failed: 1');
     });
   });

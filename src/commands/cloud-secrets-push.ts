@@ -294,7 +294,14 @@ export async function cloudSecretsPush(options: {
   logger.newline();
   logger.summary('Framework secrets push complete:');
   logger.success(`   Pushed: ${frameworkPushed}`);
-  if (frameworkFailed > 0) logger.error(`   Failed: ${frameworkFailed}`);
+  if (frameworkFailed > 0) {
+    logger.error(`   Failed: ${frameworkFailed}`);
+    logger.newline();
+    logger.error(
+      'Framework secrets push failed. Check your cloud provider credentials and secret store access.',
+    );
+    process.exit(1);
+  }
   logger.newline();
 
   // Step 7.5: Push user secrets (prompting only for truly user-specific ones)
