@@ -199,8 +199,6 @@ describe('cloudSecretsRemove', () => {
       rs.mocked(createGCPClient).mockReturnValue({
         deleteSecret: rs.fn(),
       } as unknown as ReturnType<typeof createGCPClient>);
-      rs.mocked(inquirer.prompt).mockResolvedValueOnce({ removeLocal: false });
-
       await cloudSecretsRemove('API_KEY', { env: 'dev', force: true });
 
       expect(inquirer.prompt).not.toHaveBeenCalledWith([

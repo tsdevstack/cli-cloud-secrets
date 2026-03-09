@@ -263,15 +263,19 @@ export async function cloudSecretsRemove(
 
   logger.newline();
 
-  // Step 9: Ask about removing from local file
-  const { removeLocal } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'removeLocal',
-      message: 'Remove from local .secrets.user.json as well?',
-      default: true,
-    },
-  ]);
+  // Step 9: Ask about removing from local file (skip when --force)
+  let removeLocal = false;
+  if (!options.force) {
+    const answer = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'removeLocal',
+        message: 'Remove from local .secrets.user.json as well?',
+        default: true,
+      },
+    ]);
+    removeLocal = answer.removeLocal;
+  }
 
   if (removeLocal) {
     const userSecretsPath = `${projectRoot}/.secrets.user.json`;
