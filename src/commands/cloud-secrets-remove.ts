@@ -35,33 +35,9 @@
 import { getContext } from '../context';
 import type { CloudProvider, SecretsFile } from '@tsdevstack/cli/plugin';
 import inquirer from 'inquirer';
-import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
-import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';
-import { createGCPClient } from '../utils/gcp/client-factory';
+import { removeSecretByName as removeGCPSecretByName } from '../utils/gcp/remove-secret-by-name';
 import { removeSecretByName as removeAWSSecretByName } from '../utils/aws/remove-secret-by-name';
 import { removeSecretByName as removeAzureSecretByName } from '../utils/azure/remove-secret-by-name';
-
-/**
- * Remove secret from GCP
- */
-async function removeSecretFromGCP(
-  client: SecretManagerServiceClient,
-  projectId: string,
-  secretName: string,
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    await client.deleteSecret({
-      name: `projects/${projectId}/secrets/${secretName}`,
-    });
-
-    return { success: true };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
 
 /**
  * Main cloud-secrets:remove command
@@ -227,13 +203,7 @@ export async function cloudSecretsRemove(
   const secretName = buildSecretName(projectName, scope, key);
 
   if (provider === 'gcp') {
-    const credentials = loadGCPCredentials(projectRoot, selectedEnv);
-    const client = createGCPClient(credentials);
-    result = await removeSecretFromGCP(
-      client,
-      credentials.project_id,
-      secretName,
-    );
+    result = await removeGCPSecretByName(projectRoot, selectedEnv, secretName);
   } else if (provider === 'aws') {
     result = await removeAWSSecretByName(projectRoot, selectedEnv, secretName);
   } else {
