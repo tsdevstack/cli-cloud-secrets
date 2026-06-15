@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "Cloud secrets management plugin for tsdevstack framework",
   "author": "tsdevstack",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/tsdevstack/cli-cloud-secrets.git"
@@ -33,7 +33,8 @@
   },
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ],
   "scripts": {
     "build": "rslib build",
@@ -69,8 +70,5 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.2"
   },
-  "private": false,
-  "publishConfig": {
-    "access": "restricted"
-  }
+  "private": true
 }
