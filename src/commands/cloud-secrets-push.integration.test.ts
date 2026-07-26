@@ -132,7 +132,7 @@ describe('cloudSecretsPush', () => {
 
       expect(inquirer.prompt).toHaveBeenCalledWith([
         expect.objectContaining({
-          type: 'list',
+          type: 'select',
           name: 'env',
           message: 'Select environment to push secrets to:',
           choices: ['dev', 'staging', 'prod'],

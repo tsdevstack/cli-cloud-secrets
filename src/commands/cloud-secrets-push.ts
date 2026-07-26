@@ -100,8 +100,7 @@ function extractDomainsFromInfraConfig(
   targetEnv: string,
 ): string[] {
   const envConfig = infraConfig[targetEnv] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   if (!envConfig) {
     return [];
   }
@@ -176,7 +175,7 @@ export async function cloudSecretsPush(options: {
 
     const { env } = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'select',
         name: 'env',
         message: 'Select environment to push secrets to:',
         choices: availableEnvs,

@@ -177,7 +177,7 @@ describe('cloudInit', () => {
 
       expect(inquirer.prompt).toHaveBeenCalledWith([
         expect.objectContaining({
-          type: 'list',
+          type: 'select',
           name: 'provider',
           message: 'Select cloud provider:',
           choices: [
@@ -599,7 +599,7 @@ describe('cloudInit', () => {
       ]);
       expect(inquirer.prompt).toHaveBeenCalledWith([
         expect.objectContaining({
-          type: 'list',
+          type: 'select',
           name: 'selectedEnv',
           message: 'Select environment to push secrets to:',
           choices: [

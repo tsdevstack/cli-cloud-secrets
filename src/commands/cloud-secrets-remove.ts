@@ -117,7 +117,7 @@ export async function cloudSecretsRemove(
 
     const { env } = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'select',
         name: 'env',
         message: 'Select environment to remove secret from:',
         choices: availableEnvs,

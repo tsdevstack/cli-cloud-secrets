@@ -150,7 +150,7 @@ describe('cloudSecretsDiff', () => {
 
       expect(inquirer.prompt).toHaveBeenCalledWith([
         expect.objectContaining({
-          type: 'list',
+          type: 'select',
           name: 'env',
           message: 'Select environment to compare:',
           choices: ['dev', 'staging', 'prod'],

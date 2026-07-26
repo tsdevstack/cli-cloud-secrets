@@ -87,7 +87,7 @@ export async function cloudSecretsList(options: {
 
     const { env } = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'select',
         name: 'env',
         message: 'Select environment to list secrets from:',
         choices: availableEnvs,

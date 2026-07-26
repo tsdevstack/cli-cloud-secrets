@@ -87,7 +87,7 @@ export async function cloudSecretsDiff(env?: string): Promise<void> {
 
     const { env: promptedEnv } = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'select',
         name: 'env',
         message: 'Select environment to compare:',
         choices: availableEnvs,

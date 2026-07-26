@@ -89,7 +89,7 @@ export async function cloudInit(providerOption?: string): Promise<void> {
     // Interactive selection
     const { provider } = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'select',
         name: 'provider',
         message: 'Select cloud provider:',
         choices: [
@@ -262,7 +262,7 @@ export async function cloudInit(providerOption?: string): Promise<void> {
   );
   logger.newline();
 
-  let envResults: EnvTestResult[] = [];
+  let envResults: EnvTestResult[];
 
   if (selectedProvider === 'gcp') {
     envResults = await testAllGCPEnvironments(projectRoot);
@@ -332,7 +332,7 @@ export async function cloudInit(providerOption?: string): Promise<void> {
     // Ask which environment to push to
     const { selectedEnv } = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'select',
         name: 'selectedEnv',
         message: 'Select environment to push secrets to:',
         choices: validEnvs.map((r) => ({

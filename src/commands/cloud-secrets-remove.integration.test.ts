@@ -145,7 +145,7 @@ describe('cloudSecretsRemove', () => {
 
       expect(inquirer.prompt).toHaveBeenCalledWith([
         expect.objectContaining({
-          type: 'list',
+          type: 'select',
           name: 'env',
           message: 'Select environment to remove secret from:',
           choices: ['dev', 'staging', 'prod'],

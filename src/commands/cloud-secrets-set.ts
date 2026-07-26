@@ -123,7 +123,7 @@ export async function cloudSecretsSet(
 
     const { env } = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'select',
         name: 'env',
         message: 'Select environment:',
         choices: availableEnvs,
