@@ -233,9 +233,9 @@ describe('cloudSecretsList', () => {
     });
 
     it('should list Azure secrets with warning', async () => {
-      const mockSecrets = ['REDIS_URL'];
-
-      rs.mocked(listAzureSecretsWithKeys).mockResolvedValue(mockSecrets);
+      rs.mocked(listAzureSecretsWithKeys).mockResolvedValue([
+        { key: 'REDIS_URL', scope: 'shared' },
+      ]);
 
       await cloudSecretsList({ env: 'prod' });
 
@@ -246,6 +246,50 @@ describe('cloudSecretsList', () => {
       );
       expect(mocks.logger.warn).toHaveBeenCalledWith('Azure Key Vault Naming:');
       expect(mocks.logger.success).toHaveBeenCalledWith('Total: 1 secret(s)');
+    });
+
+    it('should group Azure service-scoped secrets under their service', async () => {
+      rs.mocked(listAzureSecretsWithKeys).mockResolvedValue([
+        { key: 'JWT_SECRET', scope: 'shared' },
+        { key: 'ADMIN_EMAILS', scope: 'auth-service' },
+        { key: 'DATABASE_URL', scope: 'auth-service' },
+      ]);
+
+      await cloudSecretsList({ env: 'prod' });
+
+      expect(mocks.logger.info).toHaveBeenCalledWith('Shared secrets (1):');
+      expect(mocks.logger.info).toHaveBeenCalledWith('   JWT_SECRET');
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        'Service-specific secrets (1 services):',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith('   auth-service (2):');
+      expect(mocks.logger.info).toHaveBeenCalledWith('      ADMIN_EMAILS');
+      expect(mocks.logger.info).toHaveBeenCalledWith('      DATABASE_URL');
+      expect(mocks.logger.info).not.toHaveBeenCalledWith('   ADMIN_EMAILS');
+      expect(mocks.logger.success).toHaveBeenCalledWith('Total: 3 secret(s)');
+    });
+
+    it('should put Azure service-scoped secrets under services in JSON output', async () => {
+      rs.mocked(listAzureSecretsWithKeys).mockResolvedValue([
+        { key: 'JWT_SECRET', scope: 'shared' },
+        { key: 'ADMIN_EMAILS', scope: 'auth-service' },
+        { key: 'DATABASE_URL', scope: 'auth-service' },
+      ]);
+
+      await cloudSecretsList({ env: 'prod', json: true });
+
+      const expectedOutput = {
+        provider: 'azure',
+        project: 'test-project',
+        environment: 'prod',
+        total: 3,
+        shared: ['JWT_SECRET'],
+        services: { 'auth-service': ['ADMIN_EMAILS', 'DATABASE_URL'] },
+      };
+
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        JSON.stringify(expectedOutput, null, 2),
+      );
     });
   });
 

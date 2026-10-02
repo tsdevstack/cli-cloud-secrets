@@ -172,16 +172,23 @@ export async function cloudSecretsList(options: {
     }
     totalCount = extractedSecrets.length;
   } else if (provider === 'azure') {
-    const azureKeys = await listAzureSecretsWithKeys(
+    const extractedSecrets = await listAzureSecretsWithKeys(
       projectRoot,
       selectedEnv,
       projectName,
     );
-    // Azure still returns string[] - add all to shared for now
-    for (const key of azureKeys) {
-      sharedSecrets.push(key);
+
+    for (const { key, scope } of extractedSecrets) {
+      if (scope === 'shared') {
+        sharedSecrets.push(key);
+      } else {
+        if (!serviceSecrets[scope]) {
+          serviceSecrets[scope] = [];
+        }
+        serviceSecrets[scope].push(key);
+      }
     }
-    totalCount = azureKeys.length;
+    totalCount = extractedSecrets.length;
   }
 
   // Step 6: Output results

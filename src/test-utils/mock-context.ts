@@ -58,6 +58,7 @@ export function createMockContext() {
   const getAvailableEnvironments = rs.fn();
   const generateFrameworkSecretsFile = rs.fn();
   const loadUserSecrets = rs.fn();
+  const hasAuthTemplate = rs.fn();
   const loadFrameworkSecrets = rs.fn();
   const generateServiceUrls = rs.fn();
   const getCredentialsPath = rs.fn();
@@ -100,6 +101,7 @@ export function createMockContext() {
     getAvailableEnvironments,
     generateFrameworkSecretsFile,
     loadUserSecrets,
+    hasAuthTemplate,
     loadFrameworkSecrets,
     generateServiceUrls,
     getCredentialsPath,

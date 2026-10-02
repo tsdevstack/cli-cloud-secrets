@@ -263,7 +263,9 @@ describe('cloudSecretsDiff', () => {
           REDIS_URL: 'redis://localhost',
         },
       });
-      rs.mocked(listAzureSecretsWithKeys).mockResolvedValue(['REDIS_URL']);
+      rs.mocked(listAzureSecretsWithKeys).mockResolvedValue([
+        { key: 'REDIS_URL', scope: 'shared' },
+      ]);
 
       await cloudSecretsDiff('prod');
 
@@ -273,6 +275,33 @@ describe('cloudSecretsDiff', () => {
         'prod',
         'test-project',
       );
+      expect(mocks.logger.info).toHaveBeenCalledWith('Keys in cloud (1):');
+    });
+
+    it('should exclude Azure service-scoped secrets from the shared comparison', async () => {
+      mocks.readJsonFile.mockReturnValue({
+        secrets: {
+          REDIS_URL: 'redis://localhost',
+        },
+      });
+      rs.mocked(listAzureSecretsWithKeys).mockResolvedValue([
+        { key: 'REDIS_URL', scope: 'shared' },
+        { key: 'ADMIN_EMAILS', scope: 'auth-service' },
+        { key: 'DATABASE_URL', scope: 'auth-service' },
+      ]);
+
+      await cloudSecretsDiff('prod');
+
+      expect(mocks.logger.info).toHaveBeenCalledWith('Keys in cloud (1):');
+      expect(mocks.logger.info).not.toHaveBeenCalledWith('   ADMIN_EMAILS');
+      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+        '   ADMIN_EMAILS: exists in cloud, missing in local',
+      );
+      expect(mocks.logger.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('Differences'),
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith('   Cloud: 1');
+      expect(mocks.logger.info).toHaveBeenCalledWith('   Match: 1');
     });
   });
 

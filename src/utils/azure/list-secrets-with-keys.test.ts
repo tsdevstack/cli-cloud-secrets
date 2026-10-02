@@ -24,51 +24,47 @@ rs.mock('../../context', () => {
   };
 });
 
-// Mock dependencies
+// Mock Azure I/O; the name parser (parseAzureSecretName) runs for real
 rs.mock('./load-azure-credentials', { mock: true });
 rs.mock('./create-azure-client', { mock: true });
 rs.mock('./list-secrets', { mock: true });
-rs.mock('../extract-key-from-secret-name', { mock: true });
 
 import { loadAzureCredentials } from './load-azure-credentials';
 import { createAzureClient } from './create-azure-client';
 import { listSecrets } from './list-secrets';
-import { extractKeyFromSecretName } from '../extract-key-from-secret-name';
 
 describe('listSecretsWithKeys', () => {
   const mockProjectRoot = '/test/project';
   const mockEnv = 'development';
   const mockProjectName = 'test-project';
+  const mockCredentials = {
+    tenantId: 'test',
+    clientId: 'test',
+    clientSecret: 'test',
+    subscriptionId: 'test-sub',
+    location: 'eastus',
+  };
+  const mockClient = {};
+
+  function mockSecrets(secretsMap: Record<string, string>): void {
+    rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
+    rs.mocked(createAzureClient).mockReturnValue(
+      mockClient as unknown as ReturnType<typeof createAzureClient>,
+    );
+    rs.mocked(listSecrets).mockResolvedValue(secretsMap);
+  }
 
   beforeEach(() => {
     rs.clearAllMocks();
   });
 
   describe('Standard use cases', () => {
-    it('should list and extract secret keys successfully', async () => {
-      const mockCredentials = {
-        tenantId: 'test',
-        clientId: 'test',
-        clientSecret: 'test',
-        subscriptionId: 'test-sub',
-        location: 'eastus',
-      };
-      const mockClient = {};
-      const mockSecretsMap = {
+    it('should list shared secrets with keys converted to underscores', async () => {
+      mockSecrets({
         'test-project-shared-DATABASE-URL': 'value1',
         'test-project-shared-API-KEY': 'value2',
-        'test-project-shared-JWT-SECRET': 'value3',
-      };
-
-      rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
-      rs.mocked(createAzureClient).mockReturnValue(
-        mockClient as unknown as ReturnType<typeof createAzureClient>,
-      );
-      rs.mocked(listSecrets).mockResolvedValue(mockSecretsMap);
-      rs.mocked(extractKeyFromSecretName)
-        .mockReturnValueOnce('DATABASE-URL')
-        .mockReturnValueOnce('API-KEY')
-        .mockReturnValueOnce('JWT-SECRET');
+        'test-project-shared-JWT-PRIVATE-KEY-CURRENT': 'value3',
+      });
 
       const result = await listSecretsWithKeys(
         mockProjectRoot,
@@ -76,8 +72,11 @@ describe('listSecretsWithKeys', () => {
         mockProjectName,
       );
 
-      // Keys should be transformed from hyphens back to underscores
-      expect(result).toEqual(['DATABASE_URL', 'API_KEY', 'JWT_SECRET']);
+      expect(result).toEqual([
+        { key: 'DATABASE_URL', scope: 'shared' },
+        { key: 'API_KEY', scope: 'shared' },
+        { key: 'JWT_PRIVATE_KEY_CURRENT', scope: 'shared' },
+      ]);
       expect(loadAzureCredentials).toHaveBeenCalledWith(
         mockProjectRoot,
         mockEnv,
@@ -88,28 +87,15 @@ describe('listSecretsWithKeys', () => {
         mockEnv,
       );
       expect(listSecrets).toHaveBeenCalledWith(mockClient, mockProjectName);
-      expect(extractKeyFromSecretName).toHaveBeenCalledTimes(3);
     });
 
-    it('should handle hyphenated keys and convert to underscores', async () => {
-      const mockCredentials = {
-        tenantId: 'test',
-        clientId: 'test',
-        clientSecret: 'test',
-        subscriptionId: 'test-sub',
-        location: 'eastus',
-      };
-      const mockClient = {};
-      const mockSecretsMap = {
-        'test-project-shared-MULTI-PART-KEY': 'value1',
-      };
-
-      rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
-      rs.mocked(createAzureClient).mockReturnValue(
-        mockClient as unknown as ReturnType<typeof createAzureClient>,
-      );
-      rs.mocked(listSecrets).mockResolvedValue(mockSecretsMap);
-      rs.mocked(extractKeyFromSecretName).mockReturnValueOnce('MULTI-PART-KEY');
+    it('should include service-scoped secrets with their scope', async () => {
+      mockSecrets({
+        'test-project-shared-JWT-SECRET': 'value1',
+        'test-project-auth-service-ADMIN-EMAILS': 'value2',
+        'test-project-auth-service-DATABASE-URL': 'value3',
+        'test-project-offers-service-DATABASE-URL': 'value4',
+      });
 
       const result = await listSecretsWithKeys(
         mockProjectRoot,
@@ -117,33 +103,21 @@ describe('listSecretsWithKeys', () => {
         mockProjectName,
       );
 
-      expect(result).toEqual(['MULTI_PART_KEY']);
+      expect(result).toEqual([
+        { key: 'JWT_SECRET', scope: 'shared' },
+        { key: 'ADMIN_EMAILS', scope: 'auth-service' },
+        { key: 'DATABASE_URL', scope: 'auth-service' },
+        { key: 'DATABASE_URL', scope: 'offers-service' },
+      ]);
     });
 
     it('should filter out secrets that cannot be parsed', async () => {
-      const mockCredentials = {
-        tenantId: 'test',
-        clientId: 'test',
-        clientSecret: 'test',
-        subscriptionId: 'test-sub',
-        location: 'eastus',
-      };
-      const mockClient = {};
-      const mockSecretsMap = {
+      mockSecrets({
         'test-project-shared-VALID-KEY': 'value1',
         'malformed-secret-name': 'value2',
-        'test-project-shared-ANOTHER-KEY': 'value3',
-      };
-
-      rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
-      rs.mocked(createAzureClient).mockReturnValue(
-        mockClient as unknown as ReturnType<typeof createAzureClient>,
-      );
-      rs.mocked(listSecrets).mockResolvedValue(mockSecretsMap);
-      rs.mocked(extractKeyFromSecretName)
-        .mockReturnValueOnce('VALID-KEY')
-        .mockReturnValueOnce(null) // Cannot parse
-        .mockReturnValueOnce('ANOTHER-KEY');
+        'test-project-shared-lowercase-key': 'value3',
+        'test-project-auth-service-ANOTHER-KEY': 'value4',
+      });
 
       const result = await listSecretsWithKeys(
         mockProjectRoot,
@@ -151,26 +125,16 @@ describe('listSecretsWithKeys', () => {
         mockProjectName,
       );
 
-      expect(result).toEqual(['VALID_KEY', 'ANOTHER_KEY']);
+      expect(result).toEqual([
+        { key: 'VALID_KEY', scope: 'shared' },
+        { key: 'ANOTHER_KEY', scope: 'auth-service' },
+      ]);
     });
   });
 
   describe('Edge cases', () => {
     it('should return empty array when no secrets exist', async () => {
-      const mockCredentials = {
-        tenantId: 'test',
-        clientId: 'test',
-        clientSecret: 'test',
-        subscriptionId: 'test-sub',
-        location: 'eastus',
-      };
-      const mockClient = {};
-
-      rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
-      rs.mocked(createAzureClient).mockReturnValue(
-        mockClient as unknown as ReturnType<typeof createAzureClient>,
-      );
-      rs.mocked(listSecrets).mockResolvedValue({});
+      mockSecrets({});
 
       const result = await listSecretsWithKeys(
         mockProjectRoot,
@@ -179,29 +143,13 @@ describe('listSecretsWithKeys', () => {
       );
 
       expect(result).toEqual([]);
-      expect(extractKeyFromSecretName).not.toHaveBeenCalled();
     });
 
     it('should handle all unparseable secret names', async () => {
-      const mockCredentials = {
-        tenantId: 'test',
-        clientId: 'test',
-        clientSecret: 'test',
-        subscriptionId: 'test-sub',
-        location: 'eastus',
-      };
-      const mockClient = {};
-      const mockSecretsMap = {
+      mockSecrets({
         'bad-name-1': 'value1',
         'bad-name-2': 'value2',
-      };
-
-      rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
-      rs.mocked(createAzureClient).mockReturnValue(
-        mockClient as unknown as ReturnType<typeof createAzureClient>,
-      );
-      rs.mocked(listSecrets).mockResolvedValue(mockSecretsMap);
-      rs.mocked(extractKeyFromSecretName).mockReturnValue(null); // All unparseable
+      });
 
       const result = await listSecretsWithKeys(
         mockProjectRoot,
@@ -215,9 +163,8 @@ describe('listSecretsWithKeys', () => {
 
   describe('Error handling', () => {
     it('should throw CliError when credentials loading fails', async () => {
-      const mockError = new Error('Credentials not found');
       rs.mocked(loadAzureCredentials).mockImplementation(() => {
-        throw mockError;
+        throw new Error('Credentials not found');
       });
 
       await expect(
@@ -226,13 +173,6 @@ describe('listSecretsWithKeys', () => {
     });
 
     it('should throw CliError when client creation fails', async () => {
-      const mockCredentials = {
-        tenantId: 'test',
-        clientId: 'test',
-        clientSecret: 'test',
-        subscriptionId: 'test-sub',
-        location: 'eastus',
-      };
       rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
       rs.mocked(createAzureClient).mockImplementation(() => {
         throw new Error('Client creation failed');
@@ -244,15 +184,6 @@ describe('listSecretsWithKeys', () => {
     });
 
     it('should throw CliError when listing secrets fails', async () => {
-      const mockCredentials = {
-        tenantId: 'test',
-        clientId: 'test',
-        clientSecret: 'test',
-        subscriptionId: 'test-sub',
-        location: 'eastus',
-      };
-      const mockClient = {};
-
       rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
       rs.mocked(createAzureClient).mockReturnValue(
         mockClient as unknown as ReturnType<typeof createAzureClient>,

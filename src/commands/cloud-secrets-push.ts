@@ -7,7 +7,8 @@
  * 1. Generates FRESH framework secrets (never uses local ones)
  * 2. Auto-derives domain-dependent secrets from DOMAIN + infrastructure.json
  * 3. Pushes framework secrets in parallel
- * 4. Prompts only for truly user-specific secrets (DOMAIN, RESEND_API_KEY, EMAIL_FROM)
+ * 4. Prompts only for truly user-specific secrets (DOMAIN, RESEND_API_KEY, EMAIL_FROM,
+ *    and ADMIN_EMAILS for the auth template)
  *
  * Usage:
  *   npx tsdevstack cloud-secrets:push --env staging
@@ -23,7 +24,7 @@
  * - Auto-push TTLs, EMAIL_PROVIDER with sensible defaults
  * - Auto-derive API_URL, APP_URL, KONG_CORS_ORIGINS from DOMAIN
  * - Skip REDIS_* and DATABASE_URL (synced by infra:deploy from Terraform)
- * - Prompt only for DOMAIN, RESEND_API_KEY, EMAIL_FROM, and custom secrets
+ * - Prompt only for DOMAIN, RESEND_API_KEY, EMAIL_FROM, ADMIN_EMAILS (auth template), and custom secrets
  *
  * See docs/in-dev/phase-8-cloud-secrets.md for detailed documentation
  */
@@ -62,6 +63,13 @@ const DOMAIN_DERIVED_KEYS = [
   'KONG_CORS_ORIGINS',
 ] as const;
 
+/**
+ * First admins (auth template). Read only by the auth-service, so it is
+ * pushed to that service's scope, not shared.
+ */
+const ADMIN_EMAILS_KEY = 'ADMIN_EMAILS';
+const ADMIN_EMAILS_SCOPE = 'auth-service';
+
 /** Keys that are local-only and should never be pushed to cloud */
 const LOCAL_ONLY_KEYS = ['KONG_SERVICE_HOST'] as const;
 
@@ -86,6 +94,8 @@ function getEnvironmentHint(key: string): string | null {
     DOMAIN: 'Your base domain (e.g., example.com)',
     RESEND_API_KEY: 'Your Resend API key (from resend.com/api-keys)',
     EMAIL_FROM: 'Sender email address (e.g., noreply@example.com)',
+    ADMIN_EMAILS:
+      'Comma-separated emails promoted to ADMIN at their next login (optional)',
   };
 
   return hints[key] || null;
@@ -133,6 +143,7 @@ export async function cloudSecretsPush(options: {
     generateFrameworkSecretsFile,
     loadUserSecrets,
     getAvailableEnvironments,
+    hasAuthTemplate,
   } = getContext();
 
   logger.info('Cloud Secrets: Push secrets to cloud environment');
@@ -417,6 +428,11 @@ export async function cloudSecretsPush(options: {
     );
     logger.info(`  npx tsdevstack cloud-secrets:push --env ${selectedEnv}`);
     logger.info('  Or set directly in cloud provider console');
+    if (hasAuthTemplate(config)) {
+      logger.info(
+        `  First admins (optional): npx tsdevstack cloud-secrets:set ${ADMIN_EMAILS_KEY} --service ${ADMIN_EMAILS_SCOPE} --env ${selectedEnv}`,
+      );
+    }
     logger.newline();
   } else if (Object.keys(userSecrets).length > 0) {
     logger.updating('User secrets (checking existing, prompting for new)...');
@@ -451,6 +467,7 @@ export async function cloudSecretsPush(options: {
       ...(LOCAL_ONLY_KEYS as readonly string[]),
       ...(FRAMEWORK_DEFAULT_KEYS as readonly string[]),
       ...(DOMAIN_DERIVED_KEYS as readonly string[]),
+      ADMIN_EMAILS_KEY, // handled separately below (auth-service scope)
     ]);
 
     // Separate DOMAIN from other promptable keys — DOMAIN must be prompted first
@@ -461,8 +478,11 @@ export async function cloudSecretsPush(options: {
     );
 
     // Helper to check if a secret already exists in the cloud
-    const checkSecretExists = async (key: string): Promise<boolean> => {
-      const secretName = buildSecretName(config.project.name, 'shared', key);
+    const checkSecretExists = async (
+      key: string,
+      scope = 'shared',
+    ): Promise<boolean> => {
+      const secretName = buildSecretName(config.project.name, scope, key);
       if (provider === 'gcp' && gcpClient && gcpCredentials) {
         return secretExists(gcpClient, gcpCredentials.project_id, secretName);
       } else if (provider === 'aws' && awsClient) {
@@ -483,8 +503,9 @@ export async function cloudSecretsPush(options: {
         existing: number;
         failed: number;
       },
+      scope?: string,
     ): Promise<void> => {
-      const alreadyExists = await checkSecretExists(key);
+      const alreadyExists = await checkSecretExists(key, scope);
 
       if (alreadyExists) {
         logger.info(`${key}`);
@@ -510,8 +531,9 @@ export async function cloudSecretsPush(options: {
       ]);
 
       if (!value || value.trim() === '') {
+        const scopeFlag = scope ? ` --service ${scope}` : '';
         logger.warn(
-          `   Skipped ${key} (set later with: cloud-secrets:set ${key} --env ${selectedEnv})`,
+          `   Skipped ${key} (set later with: cloud-secrets:set ${key}${scopeFlag} --env ${selectedEnv})`,
         );
         counters.skipped++;
       } else {
@@ -519,6 +541,7 @@ export async function cloudSecretsPush(options: {
           await cloudSecretsSet(key, undefined, {
             value: value.trim(),
             env: selectedEnv,
+            ...(scope ? { service: scope } : {}),
             overwrite: false,
             internal: true,
           });
@@ -685,8 +708,28 @@ export async function cloudSecretsPush(options: {
       await promptAndPushSecret(key, counters);
     }
 
+    // Step D: ADMIN_EMAILS (auth template). Only offered when the developer
+    // filled it locally, so an environment that is already set up gets no
+    // new prompt.
+    if (hasAuthTemplate(config)) {
+      if (userSecrets[ADMIN_EMAILS_KEY]?.trim()) {
+        await promptAndPushSecret(
+          ADMIN_EMAILS_KEY,
+          counters,
+          ADMIN_EMAILS_SCOPE,
+        );
+      } else {
+        logger.info(
+          `${ADMIN_EMAILS_KEY} (optional, first admins): npx tsdevstack cloud-secrets:set ${ADMIN_EMAILS_KEY} --service ${ADMIN_EMAILS_SCOPE} --env ${selectedEnv}`,
+        );
+        logger.newline();
+      }
+    }
+
     // Log skipped keys for visibility
-    const skippedAutoKeys = userKeys.filter((key) => keysToSkip.has(key));
+    const skippedAutoKeys = userKeys.filter(
+      (key) => keysToSkip.has(key) && key !== ADMIN_EMAILS_KEY,
+    );
     if (skippedAutoKeys.length > 0) {
       logger.info(
         `Auto-managed (no prompt needed): ${skippedAutoKeys.join(', ')}`,

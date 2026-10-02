@@ -180,11 +180,15 @@ export async function cloudSecretsDiff(env?: string): Promise<void> {
       .filter((s) => s.scope === 'shared')
       .map((s) => s.key);
   } else if (provider === 'azure') {
-    cloudSecretKeys = await listAzureSecretsWithKeys(
+    const extractedSecrets = await listAzureSecretsWithKeys(
       projectRoot,
       selectedEnv,
       projectName,
     );
+    // For diff, only compare shared secrets
+    cloudSecretKeys = extractedSecrets
+      .filter((s) => s.scope === 'shared')
+      .map((s) => s.key);
   }
 
   logger.loading(`Cloud secrets: ${cloudSecretKeys.length}`);

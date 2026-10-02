@@ -421,6 +421,153 @@ describe('cloudSecretsPush', () => {
       );
     });
 
+    it('should prompt for ADMIN_EMAILS and push it to the auth-service scope when set locally', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.buildSecretName.mockImplementation(
+        (project: string, scope: string, key: string) =>
+          `${project}-${scope}-${key}`,
+      );
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: {
+          EMAIL_FROM: 'noreply@example.com',
+          ADMIN_EMAILS: 'me@example.com',
+        },
+      } as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(inquirer.prompt)
+        .mockResolvedValueOnce({ value: 'noreply@prod.com' })
+        .mockResolvedValueOnce({ value: ' admin@prod.com ' });
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(inquirer.prompt).toHaveBeenCalledTimes(2);
+      expect(mocks.buildSecretName).toHaveBeenCalledWith(
+        'test-project',
+        'auth-service',
+        'ADMIN_EMAILS',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('promoted to ADMIN'),
+      );
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'ADMIN_EMAILS',
+        undefined,
+        expect.objectContaining({
+          value: 'admin@prod.com',
+          env: 'prod',
+          service: 'auth-service',
+        }),
+      );
+    });
+
+    it('should not prompt for ADMIN_EMAILS when it is empty locally, and print the set command', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: { EMAIL_FROM: 'noreply@example.com', ADMIN_EMAILS: '  ' },
+      } as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(inquirer.prompt).mockResolvedValueOnce({
+        value: 'noreply@prod.com',
+      });
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(inquirer.prompt).toHaveBeenCalledTimes(1);
+      expect(cloudSecretsSet).not.toHaveBeenCalledWith(
+        'ADMIN_EMAILS',
+        undefined,
+        expect.anything(),
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'cloud-secrets:set ADMIN_EMAILS --service auth-service --env prod',
+        ),
+      );
+    });
+
+    it('should not prompt for ADMIN_EMAILS when the user file lacks it', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: { EMAIL_FROM: 'noreply@example.com' },
+      } as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(inquirer.prompt).mockResolvedValueOnce({
+        value: 'noreply@prod.com',
+      });
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(inquirer.prompt).toHaveBeenCalledTimes(1);
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'cloud-secrets:set ADMIN_EMAILS --service auth-service',
+        ),
+      );
+    });
+
+    it('should let the developer skip the ADMIN_EMAILS prompt', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: { ADMIN_EMAILS: 'me@example.com' },
+      } as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(inquirer.prompt).mockResolvedValueOnce({ value: '' });
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(cloudSecretsSet).not.toHaveBeenCalledWith(
+        'ADMIN_EMAILS',
+        undefined,
+        expect.anything(),
+      );
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Skipped ADMIN_EMAILS (set later with: cloud-secrets:set ADMIN_EMAILS --service auth-service',
+        ),
+      );
+    });
+
+    it('should ignore ADMIN_EMAILS without the auth template', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(false);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: {
+          EMAIL_FROM: 'noreply@example.com',
+          ADMIN_EMAILS: 'me@example.com',
+        },
+      } as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(inquirer.prompt).mockResolvedValueOnce({
+        value: 'noreply@prod.com',
+      });
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(inquirer.prompt).toHaveBeenCalledTimes(1);
+      expect(cloudSecretsSet).not.toHaveBeenCalledWith(
+        'ADMIN_EMAILS',
+        undefined,
+        expect.anything(),
+      );
+    });
+
+    it('should not prompt with --skip-user-secrets and print how to set ADMIN_EMAILS', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: { EMAIL_FROM: 'noreply@example.com' },
+      } as ReturnType<typeof mocks.loadUserSecrets>);
+      mocks.buildSecretName.mockReturnValue('test-project-shared-DOMAIN');
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
+
+      expect(inquirer.prompt).not.toHaveBeenCalled();
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'cloud-secrets:set ADMIN_EMAILS --service auth-service --env prod',
+        ),
+      );
+    });
+
     it('should handle no user secrets', async () => {
       mocks.loadUserSecrets.mockReturnValue(null);
       // Framework secrets are still pushed (KONG_SSL_VERIFY + TTLs + EMAIL_PROVIDER)

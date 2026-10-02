@@ -1,43 +1,43 @@
 import { loadAzureCredentials } from './load-azure-credentials';
 import { createAzureClient } from './create-azure-client';
 import { listSecrets } from './list-secrets';
-import { extractKeyFromSecretName } from '../extract-key-from-secret-name';
+import { parseAzureSecretName } from './parse-azure-secret-name';
+import type { ExtractedSecret } from '../extract-key-and-scope-from-secret-name';
 import { getContext } from '../../context';
 
 /**
  * List secret keys from Azure Key Vault
- * Returns array of secret keys (extracted from secret names)
+ * Returns array of extracted secrets with key and scope
  */
 export async function listSecretsWithKeys(
   projectRoot: string,
   selectedEnv: string,
   projectName: string,
-): Promise<string[]> {
+): Promise<ExtractedSecret[]> {
   try {
     const credentials = loadAzureCredentials(projectRoot, selectedEnv);
     const client = createAzureClient(credentials, projectName, selectedEnv);
     const secretsMap = await listSecrets(client, projectName);
 
-    // Extract keys from secret names (format: projectName-shared-KEY)
-    // IMPORTANT: Azure stores keys with hyphens (DATABASE-URL) but we convert back to underscores (DATABASE_URL)
-    // This matches the runtime behavior in packages/nest-common/src/secrets/providers/azure.provider.ts
-    const secretKeys: string[] = [];
+    // Extract keys and scopes from secret names (format: projectName-scope-KEY)
+    // Azure stores keys with hyphens (DATABASE-URL); the parser converts them
+    // back to underscores (DATABASE_URL), matching the runtime behavior in
+    // packages/nest-common/src/secrets/providers/azure.provider.ts
+    const extractedSecrets: ExtractedSecret[] = [];
     for (const secretName of Object.keys(secretsMap)) {
-      const key = extractKeyFromSecretName(secretName, projectName);
-      if (key) {
-        // Reverse transform: DATABASE-URL → DATABASE_URL
-        const transformedKey = key.replace(/-/g, '_');
-        secretKeys.push(transformedKey);
+      const extracted = parseAzureSecretName(secretName, projectName);
+      if (extracted) {
+        extractedSecrets.push(extracted);
       }
     }
 
-    return secretKeys;
+    return extractedSecrets;
   } catch (error) {
     const { CliError } = getContext();
     throw new CliError(
       `Failed to list secrets from Azure: ${error instanceof Error ? error.message : String(error)}`,
       'Azure Secret List Error',
-      'Check that your Azure credentials have the necessary permissions to list secrets'
+      'Check that your Azure credentials have the necessary permissions to list secrets',
     );
   }
 }
