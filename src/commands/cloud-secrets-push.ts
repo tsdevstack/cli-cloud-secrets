@@ -34,19 +34,9 @@ import { getContext } from '../context';
 import type { CloudProvider } from '@tsdevstack/cli/plugin';
 import inquirer from 'inquirer';
 import { cloudSecretsSet } from './cloud-secrets-set';
-import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';
-import { createGCPClient } from '../utils/gcp/client-factory';
-import { secretExists } from '../utils/gcp/secret-exists';
-import { loadAWSCredentials } from '../utils/aws/load-aws-credentials';
-import { createAWSClient } from '../utils/aws/client-factory';
-import { secretExists as secretExistsAWS } from '../utils/aws/secret-exists';
-import { loadAzureCredentials } from '../utils/azure/load-azure-credentials';
-import { createAzureClient } from '../utils/azure/create-azure-client';
-import { secretExists as secretExistsAzure } from '../utils/azure/secret-exists';
-import { transformKeyForAzure } from '../utils/azure/set-secret';
-import { getSecret as getGCPSecret } from '../utils/gcp/get-secret';
-import { getSecret as getAWSSecret } from '../utils/aws/get-secret';
-import { getSecret as getAzureSecret } from '../utils/azure/get-secret';
+import { createSecretStoreReader } from '../utils/create-secret-store-reader';
+import { promptSecretValue } from '../utils/prompt-secret-value';
+import type { SecretStoreReader } from '../utils/types';
 
 /** Keys pushed as framework secrets with defaults (no prompt needed) */
 const FRAMEWORK_DEFAULT_KEYS = [
@@ -237,6 +227,13 @@ export async function cloudSecretsPush(options: {
   // Override KONG_SSL_VERIFY for cloud (secure by default - verify SSL certificates)
   frameworkSecretsToUpload.KONG_SSL_VERIFY = 'yes';
 
+  // The generated value is debug, for local development. Deployed services
+  // do not read LOG_LEVEL from the secret store (they run at info), so the
+  // store holds the cloud level instead of claiming debug.
+  if ('LOG_LEVEL' in frameworkSecretsToUpload) {
+    frameworkSecretsToUpload.LOG_LEVEL = 'info';
+  }
+
   // Add TTL defaults (sensible values, user can override with cloud-secrets:set)
   frameworkSecretsToUpload.ACCESS_TOKEN_TTL = '900';
   frameworkSecretsToUpload.REFRESH_TOKEN_TTL = '604800';
@@ -314,43 +311,37 @@ export async function cloudSecretsPush(options: {
   }
   logger.newline();
 
+  // User secret keys pushed without a prompt (handled by the framework push,
+  // auto-derived, or local only). ADMIN_EMAILS is handled separately
+  // (auth-service scope).
+  const keysToSkip = new Set<string>([
+    ...(LOCAL_ONLY_KEYS as readonly string[]),
+    ...(FRAMEWORK_DEFAULT_KEYS as readonly string[]),
+    ...(DOMAIN_DERIVED_KEYS as readonly string[]),
+    ADMIN_EMAILS_KEY,
+  ]);
+
   // Step 7.5: Push user secrets (prompting only for truly user-specific ones)
-  // Skip this step if --skip-user-secrets flag is set (for CI)
+  // Skip this step if --skip-user-secrets flag is set (for CI and the MCP server)
   if (options.skipUserSecrets) {
     logger.info('Skipping user secret prompts (--skip-user-secrets flag)');
     logger.newline();
 
     // Even with --skip-user-secrets, auto-derive domain-dependent secrets
     // if DOMAIN already exists in the cloud (set via cloud-secrets:set or previous push)
-    const { buildSecretName, readJsonFile, TSDEVSTACK_DIR } = getContext();
-    const domainSecretName = buildSecretName(
-      config.project.name,
-      'shared',
-      'DOMAIN',
-    );
+    const { readJsonFile, TSDEVSTACK_DIR } = getContext();
 
+    let store: SecretStoreReader | null = null;
     let domainValue: string | null = null;
 
     try {
-      if (provider === 'gcp') {
-        const credentials = loadGCPCredentials(projectRoot, selectedEnv);
-        const client = createGCPClient(credentials);
-        const fullSecretName = `projects/${credentials.project_id}/secrets/${domainSecretName}`;
-        domainValue = await getGCPSecret(client, fullSecretName);
-      } else if (provider === 'aws') {
-        const credentials = loadAWSCredentials(projectRoot, selectedEnv);
-        const client = createAWSClient(credentials);
-        domainValue = await getAWSSecret(client, domainSecretName);
-      } else if (provider === 'azure') {
-        const credentials = loadAzureCredentials(projectRoot, selectedEnv);
-        const client = createAzureClient(
-          credentials,
-          config.project.name,
-          selectedEnv,
-        );
-        const azureSecretName = transformKeyForAzure(domainSecretName);
-        domainValue = await getAzureSecret(client, azureSecretName);
-      }
+      store = createSecretStoreReader({
+        provider,
+        projectRoot,
+        projectName: config.project.name,
+        env: selectedEnv,
+      });
+      domainValue = await store.read('DOMAIN');
     } catch {
       logger.warn('Could not read DOMAIN from cloud (non-fatal)');
     }
@@ -420,14 +411,55 @@ export async function cloudSecretsPush(options: {
       logger.info(
         `Set DOMAIN first: npx tsdevstack cloud-secrets:set DOMAIN <domain> --env ${selectedEnv}`,
       );
+      logger.info(
+        `Then run this command again to derive ${DOMAIN_DERIVED_KEYS.join(', ')}`,
+      );
       logger.newline();
     }
 
-    logger.info(
-      'Other user secrets must be set manually before first deployment:',
+    // Name the user secrets from .secrets.user.json that the cloud still
+    // lacks, so CI logs and agents know exactly what to set. Without a local
+    // file (CI), fall back to the general instructions.
+    const userKeysToCheck = Object.keys(userSecrets).filter(
+      (key) => !keysToSkip.has(key),
     );
-    logger.info(`  npx tsdevstack cloud-secrets:push --env ${selectedEnv}`);
-    logger.info('  Or set directly in cloud provider console');
+    let missingUserKeys: string[] | null = null;
+
+    if (store && userKeysToCheck.length > 0) {
+      try {
+        const missing: string[] = [];
+        for (const key of userKeysToCheck) {
+          if (!(await store.exists(key))) {
+            missing.push(key);
+          }
+        }
+        missingUserKeys = missing;
+      } catch {
+        logger.warn('Could not check user secrets in cloud (non-fatal)');
+      }
+    }
+
+    if (missingUserKeys === null) {
+      logger.info(
+        'Other user secrets must be set manually before first deployment:',
+      );
+      logger.info(`  npx tsdevstack cloud-secrets:push --env ${selectedEnv}`);
+      logger.info('  Or set directly in cloud provider console');
+    } else if (missingUserKeys.length > 0) {
+      logger.warn(
+        `User secrets not set in ${selectedEnv}: ${missingUserKeys.join(', ')}`,
+      );
+      logger.info('Set each before the first deployment:');
+      for (const key of missingUserKeys) {
+        logger.info(
+          `  npx tsdevstack cloud-secrets:set ${key} --env ${selectedEnv}`,
+        );
+      }
+    } else {
+      logger.success(
+        `All user secrets from .secrets.user.json are set in ${selectedEnv}`,
+      );
+    }
     if (hasAuthTemplate(config)) {
       logger.info(
         `  First admins (optional): npx tsdevstack cloud-secrets:set ${ADMIN_EMAILS_KEY} --service ${ADMIN_EMAILS_SCOPE} --env ${selectedEnv}`,
@@ -438,37 +470,14 @@ export async function cloudSecretsPush(options: {
     logger.updating('User secrets (checking existing, prompting for new)...');
     logger.newline();
 
-    // Initialize client for checking secret existence
-    const { buildSecretName, readJsonFile, TSDEVSTACK_DIR } = getContext();
-    let gcpCredentials: ReturnType<typeof loadGCPCredentials> | undefined;
-    let gcpClient: ReturnType<typeof createGCPClient> | undefined;
-    let awsCredentials: ReturnType<typeof loadAWSCredentials> | undefined;
-    let awsClient: ReturnType<typeof createAWSClient> | undefined;
-    let azureCredentials: ReturnType<typeof loadAzureCredentials> | undefined;
-    let azureClient: ReturnType<typeof createAzureClient> | undefined;
-
-    if (provider === 'gcp') {
-      gcpCredentials = loadGCPCredentials(projectRoot, selectedEnv);
-      gcpClient = createGCPClient(gcpCredentials);
-    } else if (provider === 'aws') {
-      awsCredentials = loadAWSCredentials(projectRoot, selectedEnv);
-      awsClient = createAWSClient(awsCredentials);
-    } else {
-      azureCredentials = loadAzureCredentials(projectRoot, selectedEnv);
-      azureClient = createAzureClient(
-        azureCredentials,
-        config.project.name,
-        selectedEnv,
-      );
-    }
-
-    // Build set of keys to skip (handled by framework push or auto-derived)
-    const keysToSkip = new Set<string>([
-      ...(LOCAL_ONLY_KEYS as readonly string[]),
-      ...(FRAMEWORK_DEFAULT_KEYS as readonly string[]),
-      ...(DOMAIN_DERIVED_KEYS as readonly string[]),
-      ADMIN_EMAILS_KEY, // handled separately below (auth-service scope)
-    ]);
+    // Reader for checking secret existence
+    const { readJsonFile, TSDEVSTACK_DIR } = getContext();
+    const store = createSecretStoreReader({
+      provider,
+      projectRoot,
+      projectName: config.project.name,
+      env: selectedEnv,
+    });
 
     // Separate DOMAIN from other promptable keys — DOMAIN must be prompted first
     // so we can auto-derive API_URL, APP_URL, KONG_CORS_ORIGINS after it
@@ -476,23 +485,6 @@ export async function cloudSecretsPush(options: {
     const promptableKeys = userKeys.filter(
       (key) => !keysToSkip.has(key) && key !== 'DOMAIN',
     );
-
-    // Helper to check if a secret already exists in the cloud
-    const checkSecretExists = async (
-      key: string,
-      scope = 'shared',
-    ): Promise<boolean> => {
-      const secretName = buildSecretName(config.project.name, scope, key);
-      if (provider === 'gcp' && gcpClient && gcpCredentials) {
-        return secretExists(gcpClient, gcpCredentials.project_id, secretName);
-      } else if (provider === 'aws' && awsClient) {
-        return secretExistsAWS(awsClient, secretName);
-      } else if (provider === 'azure' && azureClient) {
-        const azureSecretName = transformKeyForAzure(secretName);
-        return secretExistsAzure(azureClient, azureSecretName);
-      }
-      return false;
-    };
 
     // Helper to prompt for and push a single secret
     const promptAndPushSecret = async (
@@ -505,7 +497,7 @@ export async function cloudSecretsPush(options: {
       },
       scope?: string,
     ): Promise<void> => {
-      const alreadyExists = await checkSecretExists(key, scope);
+      const alreadyExists = await store.exists(key, scope);
 
       if (alreadyExists) {
         logger.info(`${key}`);
@@ -522,13 +514,11 @@ export async function cloudSecretsPush(options: {
         logger.info(`   ${hint}`);
       }
 
-      const { value } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'value',
-          message: `Enter value for ${selectedEnv} (leave empty to skip):`,
-        },
-      ]);
+      // Credentials are masked; DOMAIN, EMAIL_FROM, ADMIN_EMAILS stay visible
+      const value = await promptSecretValue(
+        key,
+        `Enter value for ${selectedEnv} (leave empty to skip):`,
+      );
 
       if (!value || value.trim() === '') {
         const scopeFlag = scope ? ` --service ${scope}` : '';
@@ -564,7 +554,7 @@ export async function cloudSecretsPush(options: {
     let domainValue: string | undefined;
 
     if (userSecrets.DOMAIN !== undefined) {
-      const domainExists = await checkSecretExists('DOMAIN');
+      const domainExists = await store.exists('DOMAIN');
 
       if (!domainExists) {
         logger.info('DOMAIN');
@@ -610,23 +600,7 @@ export async function cloudSecretsPush(options: {
         logger.newline();
         counters.existing++;
         // Read actual DOMAIN value to derive dependent secrets
-        const domainSecretName = buildSecretName(
-          config.project.name,
-          'shared',
-          'DOMAIN',
-        );
-        if (provider === 'gcp' && gcpClient && gcpCredentials) {
-          const fullSecretName = `projects/${gcpCredentials.project_id}/secrets/${domainSecretName}`;
-          domainValue =
-            (await getGCPSecret(gcpClient, fullSecretName)) ?? undefined;
-        } else if (provider === 'aws' && awsClient) {
-          domainValue =
-            (await getAWSSecret(awsClient, domainSecretName)) ?? undefined;
-        } else if (provider === 'azure' && azureClient) {
-          const azureSecretName = transformKeyForAzure(domainSecretName);
-          domainValue =
-            (await getAzureSecret(azureClient, azureSecretName)) ?? undefined;
-        }
+        domainValue = (await store.read('DOMAIN')) ?? undefined;
       }
     }
 
@@ -677,7 +651,7 @@ export async function cloudSecretsPush(options: {
       ];
 
       for (const { key, value } of derivedSecrets) {
-        const alreadyExists = await checkSecretExists(key);
+        const alreadyExists = await store.exists(key);
         if (alreadyExists) {
           logger.info(`${key}`);
           logger.success(`   Already exists in ${selectedEnv}`);

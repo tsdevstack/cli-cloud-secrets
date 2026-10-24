@@ -33,6 +33,7 @@ rs.mock('../utils/azure/client-factory', () => ({
 
 import inquirer from 'inquirer';
 import { cloudSecretsSet } from './cloud-secrets-set';
+import { createGCPClient } from '../utils/gcp/client-factory';
 describe('cloudSecretsPush', () => {
   const mockProjectRoot = '/test/project';
   const mockConfig = {
@@ -250,6 +251,21 @@ describe('cloudSecretsPush', () => {
         'AUTH_SERVICE_URL',
         undefined,
         expect.any(Object),
+      );
+    });
+
+    it('should push LOG_LEVEL as info, not the local debug', async () => {
+      mocks.generateFrameworkSecretsFile.mockReturnValue({
+        secrets: { LOG_LEVEL: 'debug' },
+      } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'dev' });
+
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'LOG_LEVEL',
+        undefined,
+        expect.objectContaining({ value: 'info', env: 'dev' }),
       );
     });
 
@@ -565,6 +581,79 @@ describe('cloudSecretsPush', () => {
         expect.stringContaining(
           'cloud-secrets:set ADMIN_EMAILS --service auth-service --env prod',
         ),
+      );
+    });
+
+    it('should list user secrets missing in the cloud with --skip-user-secrets', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(false);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: {
+          DOMAIN: 'localhost',
+          RESEND_API_KEY: 're_local',
+          EMAIL_FROM: 'noreply@example.com',
+          API_URL: 'http://localhost:8000',
+          KONG_SERVICE_HOST: 'host.docker.internal',
+          ADMIN_EMAILS: 'me@example.com',
+        },
+      } as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
+
+      expect(inquirer.prompt).not.toHaveBeenCalled();
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        'User secrets not set in prod: DOMAIN, RESEND_API_KEY, EMAIL_FROM',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        '  npx tsdevstack cloud-secrets:set RESEND_API_KEY --env prod',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        'Then run this command again to derive API_URL, APP_URL, KONG_CORS_ORIGINS',
+      );
+      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+        '  npx tsdevstack cloud-secrets:set API_URL --env prod',
+      );
+    });
+
+    it('should derive from DOMAIN and report all user secrets set with --skip-user-secrets', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(false);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: { DOMAIN: 'localhost', RESEND_API_KEY: 're_local' },
+      } as ReturnType<typeof mocks.loadUserSecrets>);
+      mocks.buildSecretName.mockImplementation(
+        (project: string, scope: string, key: string) =>
+          `${project}-${scope}-${key}`,
+      );
+      rs.mocked(createGCPClient).mockReturnValue({
+        getSecret: rs.fn().mockResolvedValue([{}]),
+        accessSecretVersion: rs
+          .fn()
+          .mockResolvedValue([{ payload: { data: Buffer.from('shop.com') } }]),
+      } as unknown as ReturnType<typeof createGCPClient>);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
+
+      expect(inquirer.prompt).not.toHaveBeenCalled();
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'API_URL',
+        undefined,
+        expect.objectContaining({ value: 'https://api.shop.com', env: 'prod' }),
+      );
+      expect(mocks.logger.success).toHaveBeenCalledWith(
+        'All user secrets from .secrets.user.json are set in prod',
+      );
+    });
+
+    it('should fall back to general instructions with --skip-user-secrets and no local user secrets', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(false);
+      mocks.loadUserSecrets.mockReturnValue(null);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
+
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        'Other user secrets must be set manually before first deployment:',
       );
     });
 

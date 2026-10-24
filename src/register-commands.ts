@@ -45,7 +45,7 @@ export function registerCloudPlugin(program: Command): void {
     .option('-e, --env <environment>', 'Target environment (dev/staging/prod)')
     .option(
       '--skip-user-secrets',
-      'Skip user secrets (framework secrets only, for CI)',
+      'No prompts: push framework secrets and list missing user secrets (for CI and agents)',
     )
     .action(
       wrapCommand(

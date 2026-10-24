@@ -212,11 +212,15 @@ export async function cloudInit(providerOption?: string): Promise<void> {
         logger.loading(`Setting up environment: ${env}`);
 
         // Register resource providers for each subscription
-        logger.loading(`  Registering Azure resource providers for ${env}...`);
+        logger.loading(`  Checking Azure resource providers for ${env}...`);
         const registerResult =
           await registerResourceProviders(azureCredentials);
-        if (registerResult.success) {
-          logger.success(`  Resource providers registered for ${env}`);
+        if (registerResult.success && registerResult.registering.length > 0) {
+          logger.success(
+            `  Registering ${registerResult.registering.length} resource providers for ${env} (Azure takes a few minutes): ${registerResult.registering.join(', ')}`,
+          );
+        } else if (registerResult.success) {
+          logger.success(`  All resource providers registered for ${env}`);
         } else {
           logger.error(
             `  Failed to register providers for ${env}: ${registerResult.error}`,

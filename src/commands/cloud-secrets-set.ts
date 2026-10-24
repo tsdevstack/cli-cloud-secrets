@@ -28,6 +28,7 @@
 import { getContext } from '../context';
 import type { CloudProvider } from '@tsdevstack/cli/plugin';
 import inquirer from 'inquirer';
+import { promptSecretValue } from '../utils/prompt-secret-value';
 import type { CloudSecretResult } from '../utils/types';
 import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';
 import { createGCPClient } from '../utils/gcp/client-factory';
@@ -179,14 +180,8 @@ export async function cloudSecretsSet(
   // Step 7: Get secret value (positional > --value option > prompt)
   let value = positionalValue ?? options.value;
   if (!value && !internal) {
-    const answers = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'value',
-        message: `Enter value for ${key}:`,
-      },
-    ]);
-    value = answers.value;
+    // Credentials are masked; DOMAIN, EMAIL_FROM, ADMIN_EMAILS stay visible
+    value = await promptSecretValue(key, `Enter value for ${key}:`);
   }
 
   if (!value) {

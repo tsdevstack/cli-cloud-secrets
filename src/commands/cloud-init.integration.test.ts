@@ -148,7 +148,11 @@ describe('cloudInit', () => {
           location: 'eastus',
         } as AzureCredentials,
       });
-      rs.mocked(registerResourceProviders).mockResolvedValue({ success: true });
+      rs.mocked(registerResourceProviders).mockResolvedValue({
+        success: true,
+        registering: [],
+        unregistered: [],
+      });
       rs.mocked(ensureKeyVaultExists).mockResolvedValue({
         exists: true,
         created: false,
@@ -322,7 +326,11 @@ describe('cloudInit', () => {
         } as AzureCredentials,
       };
       mocks.loadCredentialsFile.mockReturnValue(mockCredentials);
-      rs.mocked(registerResourceProviders).mockResolvedValue({ success: true });
+      rs.mocked(registerResourceProviders).mockResolvedValue({
+        success: true,
+        registering: [],
+        unregistered: [],
+      });
       rs.mocked(ensureKeyVaultExists).mockResolvedValue({
         exists: true,
         created: false,
@@ -338,7 +346,38 @@ describe('cloudInit', () => {
         mockCredentials.dev,
       );
       expect(mocks.logger.success).toHaveBeenCalledWith(
-        '  Resource providers registered for dev',
+        '  All resource providers registered for dev',
+      );
+    });
+
+    it('should say which providers it started registering', async () => {
+      mocks.loadCredentialsFile.mockReturnValue({
+        dev: {
+          subscriptionId: 'sub-123',
+          tenantId: 'tenant-123',
+          clientId: 'client-123',
+          clientSecret: 'secret-123',
+          location: 'eastus',
+        } as AzureCredentials,
+      });
+      rs.mocked(registerResourceProviders).mockResolvedValue({
+        success: true,
+        registering: ['Microsoft.App', 'Microsoft.Cdn'],
+        unregistered: [],
+      });
+      rs.mocked(ensureKeyVaultExists).mockResolvedValue({
+        exists: true,
+        created: false,
+      });
+      rs.mocked(testAllAzureEnvironments).mockResolvedValue([
+        { env: 'dev', valid: true },
+      ]);
+      rs.mocked(inquirer.prompt).mockResolvedValueOnce({ pushSecrets: false });
+
+      await cloudInit('azure');
+
+      expect(mocks.logger.success).toHaveBeenCalledWith(
+        '  Registering 2 resource providers for dev (Azure takes a few minutes): Microsoft.App, Microsoft.Cdn',
       );
     });
 
@@ -360,7 +399,11 @@ describe('cloudInit', () => {
         } as AzureCredentials,
       };
       mocks.loadCredentialsFile.mockReturnValue(mockCredentials);
-      rs.mocked(registerResourceProviders).mockResolvedValue({ success: true });
+      rs.mocked(registerResourceProviders).mockResolvedValue({
+        success: true,
+        registering: [],
+        unregistered: [],
+      });
       rs.mocked(ensureKeyVaultExists)
         .mockResolvedValueOnce({ exists: true, created: true })
         .mockResolvedValueOnce({ exists: true, created: false });
@@ -403,6 +446,8 @@ describe('cloudInit', () => {
       mocks.loadCredentialsFile.mockReturnValue(mockCredentials);
       rs.mocked(registerResourceProviders).mockResolvedValue({
         success: false,
+        registering: [],
+        unregistered: ['Microsoft.App'],
         error: 'Permission denied',
       });
       rs.mocked(ensureKeyVaultExists).mockResolvedValue({
@@ -484,7 +529,11 @@ describe('cloudInit', () => {
         dev: {} as AzureCredentials,
       };
       mocks.loadCredentialsFile.mockReturnValue(mockCredentials);
-      rs.mocked(registerResourceProviders).mockResolvedValue({ success: true });
+      rs.mocked(registerResourceProviders).mockResolvedValue({
+        success: true,
+        registering: [],
+        unregistered: [],
+      });
       rs.mocked(ensureKeyVaultExists).mockResolvedValue({
         exists: true,
         created: false,

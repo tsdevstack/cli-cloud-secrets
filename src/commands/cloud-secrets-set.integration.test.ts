@@ -192,11 +192,13 @@ describe('cloudSecretsSet', () => {
 
       await cloudSecretsSet('API_KEY', undefined, { env: 'dev' });
 
+      // A credential: masked while typed
       expect(inquirer.prompt).toHaveBeenCalledWith([
         expect.objectContaining({
-          type: 'input',
+          type: 'password',
           name: 'value',
           message: 'Enter value for API_KEY:',
+          mask: '*',
         }),
       ]);
     });

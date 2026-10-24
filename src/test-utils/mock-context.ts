@@ -116,6 +116,21 @@ export function createMockContext() {
     wrapCommand,
     TSDEVSTACK_DIR: '.tsdevstack',
     CLOUD_PROVIDERS: ['gcp', 'aws', 'azure'] as const,
+    // Same list as cli-core's AZURE_REQUIRED_RESOURCE_PROVIDERS
+    AZURE_REQUIRED_RESOURCE_PROVIDERS: [
+      'Microsoft.ContainerRegistry',
+      'Microsoft.App',
+      'Microsoft.Web',
+      'Microsoft.DBforPostgreSQL',
+      'Microsoft.Cache',
+      'Microsoft.Cdn',
+      'Microsoft.Network',
+      'Microsoft.OperationalInsights',
+      'microsoft.insights',
+      'Microsoft.ManagedIdentity',
+      'Microsoft.Storage',
+      'Microsoft.KeyVault',
+    ] as const,
   };
 }
 
