@@ -22,7 +22,7 @@
     "azure"
   ],
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.15.0"
   },
   "type": "module",
   "exports": {
@@ -51,19 +51,19 @@
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.984.0",
     "@aws-sdk/client-sts": "^3.984.0",
-    "@azure/arm-keyvault": "^5.0.0",
+    "@azure/arm-keyvault": "^6.0.0",
     "@azure/arm-resources": "^8.0.0",
-    "@azure/identity": "^4.13.0",
+    "@azure/identity": "^4.14.0",
     "@azure/keyvault-secrets": "^4.10.0",
-    "@google-cloud/secret-manager": "^6.1.1",
+    "@google-cloud/secret-manager": "^7.2.0",
     "inquirer": "^14.0.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@rslib/core": "^0.23.2",
-    "@rstest/adapter-rslib": "^0.11.4",
-    "@rstest/core": "^0.11.4",
-    "@types/node": "^22.19.17",
+    "@rslib/core": "^1.0.4",
+    "@rstest/adapter-rslib": "^0.12.4",
+    "@rstest/core": "^0.12.4",
+    "@types/node": "^24.19.2",
     "eslint": "^10.7.0",
     "globals": "^17.5.0",
     "prettier": "^3.6.2",
