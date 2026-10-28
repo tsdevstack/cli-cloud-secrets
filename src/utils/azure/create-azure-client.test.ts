@@ -14,9 +14,11 @@ rs.mock('@azure/keyvault-secrets', () => {
   };
 });
 
-rs.mock('./create-azure-credential', () => ({
-  createAzureCredential: rs.fn(
-    (credentials: {
+rs.mock('../../context', () => ({
+  getContext: () => ({
+    buildKeyVaultName: (project: string, env: string, scope = 'shared') =>
+      `${project}-${env}-${scope === 'shared' ? 'kv' : scope}`,
+    createAzureCredential: (credentials: {
       tenantId: string;
       clientId: string;
       clientSecret: string;
@@ -25,7 +27,7 @@ rs.mock('./create-azure-credential', () => ({
       clientId: credentials.clientId,
       clientSecret: credentials.clientSecret,
     }),
-  ),
+  }),
 }));
 
 import { createAzureClient } from './create-azure-client';
@@ -81,6 +83,18 @@ describe('createAzureClient', () => {
     );
     expect((prodClient as unknown as { vaultUrl: string }).vaultUrl).toBe(
       'https://app-prod-kv.vault.azure.net',
+    );
+  });
+
+  it("should point at a service's own vault for its scope", () => {
+    const client = createAzureClient(
+      mockCredentials,
+      'myproject',
+      'dev',
+      'auth-service',
+    );
+    expect((client as unknown as { vaultUrl: string }).vaultUrl).toBe(
+      'https://myproject-dev-auth-service.vault.azure.net',
     );
   });
 

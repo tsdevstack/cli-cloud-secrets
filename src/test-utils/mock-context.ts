@@ -56,6 +56,7 @@ export function createMockContext() {
   const loadCredentialsFile = rs.fn();
   const validateDuplicateCredentials = rs.fn();
   const getAvailableEnvironments = rs.fn();
+  const resolveEnvironment = rs.fn();
   const generateFrameworkSecretsFile = rs.fn();
   const loadUserSecrets = rs.fn();
   const hasAuthTemplate = rs.fn();
@@ -69,6 +70,34 @@ export function createMockContext() {
   const getAWSCredentialsFromEnv = rs.fn();
   const getAzureCredentialsFromEnv = rs.fn();
   const buildGCPClientOptions = rs.fn();
+  const keyVaultExists = rs.fn();
+  const ensureKeyVaultExists = rs.fn();
+  const createAzureCredential = rs.fn(() => ({}));
+
+  // Same rule as cli-core's getSecretScope, driven by the hasAuthTemplate
+  // mock; a plain function, so resetting mocks keeps it working
+  const AUTH_SERVICE_SECRETS = [
+    'JWT_PRIVATE_KEY_CURRENT',
+    'JWT_PUBLIC_KEY_CURRENT',
+    'JWT_KEY_ID_CURRENT',
+    'JWT_PRIVATE_KEY_PREVIOUS',
+    'JWT_PUBLIC_KEY_PREVIOUS',
+    'JWT_KEY_ID_PREVIOUS',
+    'REFRESH_TOKEN_SECRET',
+    'BCRYPT_ROUNDS',
+    'ADMIN_EMAILS',
+  ] as const;
+  // Same names as cli-core's buildKeyVaultName for short names
+  const buildKeyVaultName = (
+    projectName: string,
+    env: string,
+    scope = 'shared',
+  ): string => `${projectName}-${env}-${scope === 'shared' ? 'kv' : scope}`;
+  const getSecretScope = (key: string, config: unknown): string =>
+    hasAuthTemplate(config) &&
+    (AUTH_SERVICE_SECRETS as readonly string[]).includes(key)
+      ? 'auth-service'
+      : 'shared';
 
   // Mock CliError class
   class CliError extends Error {
@@ -99,6 +128,7 @@ export function createMockContext() {
     loadCredentialsFile,
     validateDuplicateCredentials,
     getAvailableEnvironments,
+    resolveEnvironment,
     generateFrameworkSecretsFile,
     loadUserSecrets,
     hasAuthTemplate,
@@ -112,9 +142,19 @@ export function createMockContext() {
     getAWSCredentialsFromEnv,
     getAzureCredentialsFromEnv,
     buildGCPClientOptions,
+    getSecretScope,
+    buildKeyVaultName,
+    keyVaultExists,
+    ensureKeyVaultExists,
+    createAzureCredential,
     CliError,
     wrapCommand,
     TSDEVSTACK_DIR: '.tsdevstack',
+    SHARED_SECRET_SCOPE: 'shared',
+    AZURE_KEYVAULT_NAME_ENV: 'AZURE_KEYVAULT_NAME',
+    AZURE_SERVICE_KEYVAULT_NAME_ENV: 'AZURE_SERVICE_KEYVAULT_NAME',
+    AUTH_SERVICE_NAME: 'auth-service',
+    AUTH_SERVICE_SECRETS,
     CLOUD_PROVIDERS: ['gcp', 'aws', 'azure'] as const,
     // Same list as cli-core's AZURE_REQUIRED_RESOURCE_PROVIDERS
     AZURE_REQUIRED_RESOURCE_PROVIDERS: [

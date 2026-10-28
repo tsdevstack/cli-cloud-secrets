@@ -13,6 +13,8 @@ import { cloudSecretsDiff } from './commands/cloud-secrets-diff';
 import { cloudSecretsList } from './commands/cloud-secrets-list';
 import { cloudSecretsRemove } from './commands/cloud-secrets-remove';
 import { cloudSecretsGet } from './commands/cloud-secrets-get';
+import { cloudSecretsMigrate } from './commands/cloud-secrets-migrate';
+import { cloudSecretsCleanup } from './commands/cloud-secrets-cleanup';
 import { wrapCommand } from './context';
 
 /**
@@ -69,8 +71,15 @@ export function registerCloudPlugin(program: Command): void {
     .command('cloud-secrets:set <key> [value]')
     .description('Set or update a secret in cloud environment')
     .option('-e, --env <environment>', 'Target environment (dev/staging/prod)')
-    .option('-s, --service <service>', 'Service scope (defaults to shared)')
+    .option(
+      '-s, --service <service>',
+      'Service scope (default: auth-service for the auth secrets, shared for the rest)',
+    )
     .option('-v, --value <value>', 'Secret value (prompted if not provided)')
+    .option(
+      '--stdin',
+      'Read the value from standard input (keeps it out of the process list)',
+    )
     .option('--overwrite', 'Overwrite existing secret without prompting')
     .action(
       wrapCommand(
@@ -79,6 +88,7 @@ export function registerCloudPlugin(program: Command): void {
           positionalValue: string | undefined,
           options: {
             value?: string;
+            stdin?: boolean;
             env?: string;
             service?: string;
             overwrite?: boolean;
@@ -93,7 +103,10 @@ export function registerCloudPlugin(program: Command): void {
     .command('cloud-secrets:remove <key>')
     .description('Remove a secret from cloud environment')
     .option('-e, --env <environment>', 'Target environment (dev/staging/prod)')
-    .option('-s, --service <service>', 'Service scope (defaults to shared)')
+    .option(
+      '-s, --service <service>',
+      'Service scope (default: auth-service for the auth secrets, shared for the rest)',
+    )
     .option('-f, --force', 'Skip confirmation prompt')
     .action(
       wrapCommand(
@@ -104,6 +117,31 @@ export function registerCloudPlugin(program: Command): void {
           await cloudSecretsRemove(key, options);
         },
       ),
+    );
+
+  program
+    .command('cloud-secrets:migrate')
+    .description(
+      'Copy secrets an older CLI left in old places to where the services read them (never deletes)',
+    )
+    .option('-e, --env <environment>', 'Target environment (dev/staging/prod)')
+    .action(
+      wrapCommand(async (options: { env?: string }) => {
+        await cloudSecretsMigrate(options);
+      }),
+    );
+
+  program
+    .command('cloud-secrets:cleanup')
+    .description(
+      'Delete the old copies of moved secrets whose new copy has the same value',
+    )
+    .option('-e, --env <environment>', 'Target environment (dev/staging/prod)')
+    .option('-f, --force', 'Skip confirmation prompt')
+    .action(
+      wrapCommand(async (options: { env?: string; force?: boolean }) => {
+        await cloudSecretsCleanup(options);
+      }),
     );
 
   program
@@ -121,7 +159,10 @@ export function registerCloudPlugin(program: Command): void {
     .command('cloud-secrets:get <key>')
     .description('Get a secret value from cloud environment')
     .option('-e, --env <environment>', 'Target environment (dev/staging/prod)')
-    .option('-s, --service <service>', 'Service scope (defaults to shared)')
+    .option(
+      '-s, --service <service>',
+      'Service scope (default: auth-service for the auth secrets, shared for the rest)',
+    )
     .option('--json', 'Output as JSON')
     .action(
       wrapCommand(

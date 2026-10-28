@@ -33,7 +33,6 @@ import { testAllGCPEnvironments } from '../utils/gcp/testing';
 import { testAllAWSEnvironments } from '../utils/aws/testing';
 import {
   testAllAzureEnvironments,
-  ensureKeyVaultExists,
   registerResourceProviders,
 } from '../utils/azure/testing';
 import type { EnvTestResult } from '../utils/types';
@@ -153,7 +152,7 @@ describe('cloudInit', () => {
         registering: [],
         unregistered: [],
       });
-      rs.mocked(ensureKeyVaultExists).mockResolvedValue({
+      mocks.ensureKeyVaultExists.mockResolvedValue({
         exists: true,
         created: false,
       });
@@ -331,7 +330,7 @@ describe('cloudInit', () => {
         registering: [],
         unregistered: [],
       });
-      rs.mocked(ensureKeyVaultExists).mockResolvedValue({
+      mocks.ensureKeyVaultExists.mockResolvedValue({
         exists: true,
         created: false,
       });
@@ -365,7 +364,7 @@ describe('cloudInit', () => {
         registering: ['Microsoft.App', 'Microsoft.Cdn'],
         unregistered: [],
       });
-      rs.mocked(ensureKeyVaultExists).mockResolvedValue({
+      mocks.ensureKeyVaultExists.mockResolvedValue({
         exists: true,
         created: false,
       });
@@ -404,7 +403,7 @@ describe('cloudInit', () => {
         registering: [],
         unregistered: [],
       });
-      rs.mocked(ensureKeyVaultExists)
+      mocks.ensureKeyVaultExists
         .mockResolvedValueOnce({ exists: true, created: true })
         .mockResolvedValueOnce({ exists: true, created: false });
       rs.mocked(testAllAzureEnvironments).mockResolvedValue([
@@ -415,12 +414,12 @@ describe('cloudInit', () => {
 
       await cloudInit('azure');
 
-      expect(ensureKeyVaultExists).toHaveBeenCalledWith(
+      expect(mocks.ensureKeyVaultExists).toHaveBeenCalledWith(
         'test-project',
         'dev',
         mockCredentials.dev,
       );
-      expect(ensureKeyVaultExists).toHaveBeenCalledWith(
+      expect(mocks.ensureKeyVaultExists).toHaveBeenCalledWith(
         'test-project',
         'staging',
         mockCredentials.staging,
@@ -450,7 +449,7 @@ describe('cloudInit', () => {
         unregistered: ['Microsoft.App'],
         error: 'Permission denied',
       });
-      rs.mocked(ensureKeyVaultExists).mockResolvedValue({
+      mocks.ensureKeyVaultExists.mockResolvedValue({
         exists: false,
         created: false,
         error: 'Failed to create vault',
@@ -534,7 +533,7 @@ describe('cloudInit', () => {
         registering: [],
         unregistered: [],
       });
-      rs.mocked(ensureKeyVaultExists).mockResolvedValue({
+      mocks.ensureKeyVaultExists.mockResolvedValue({
         exists: true,
         created: false,
       });

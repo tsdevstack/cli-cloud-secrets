@@ -24,7 +24,14 @@
  * - Auto-push TTLs, EMAIL_PROVIDER with sensible defaults
  * - Auto-derive API_URL, APP_URL, KONG_CORS_ORIGINS from DOMAIN
  * - Skip REDIS_* and DATABASE_URL (synced by infra:deploy from Terraform)
- * - Prompt only for DOMAIN, RESEND_API_KEY, EMAIL_FROM, ADMIN_EMAILS (auth template), and custom secrets
+ * - Write each secret to the scope it belongs to (getSecretScope): the auth
+ *   secrets to auth-service, the rest to shared. An environment set up before
+ *   the auth scope existed keeps its values (copied from shared, never
+ *   regenerated, so users stay logged in)
+ * - Prompt only for DOMAIN, RESEND_API_KEY, EMAIL_FROM, ADMIN_EMAILS (auth template), and custom secrets:
+ *   a top-level one goes to shared, one written in a backend service's section of
+ *   .secrets.user.json to that service's scope (frontend and worker sections are
+ *   named, not pushed: nothing reads them in the cloud)
  *
  * See docs/in-dev/phase-8-cloud-secrets.md for detailed documentation
  */
@@ -36,6 +43,11 @@ import inquirer from 'inquirer';
 import { cloudSecretsSet } from './cloud-secrets-set';
 import { createSecretStoreReader } from '../utils/create-secret-store-reader';
 import { promptSecretValue } from '../utils/prompt-secret-value';
+import { planScopedSecretPush } from '../utils/plan-scoped-secret-push';
+import { isLocalOnlySecret } from '../utils/is-local-only-secret';
+import { listServiceUserSecrets } from '../utils/list-service-user-secrets';
+import { listUnreadUserSecretSections } from '../utils/list-unread-user-secret-sections';
+import { LOCAL_ONLY_SECRET_KEYS } from '../constants';
 import type { SecretStoreReader } from '../utils/types';
 
 /** Keys pushed as framework secrets with defaults (no prompt needed) */
@@ -54,14 +66,10 @@ const DOMAIN_DERIVED_KEYS = [
 ] as const;
 
 /**
- * First admins (auth template). Read only by the auth-service, so it is
- * pushed to that service's scope, not shared.
+ * First admins (auth template). Read only by the auth-service, so it goes to
+ * that service's scope (getSecretScope), not shared.
  */
 const ADMIN_EMAILS_KEY = 'ADMIN_EMAILS';
-const ADMIN_EMAILS_SCOPE = 'auth-service';
-
-/** Keys that are local-only and should never be pushed to cloud */
-const LOCAL_ONLY_KEYS = ['KONG_SERVICE_HOST'] as const;
 
 /** Reserved keys in infrastructure.json environment config (not service names) */
 const INFRA_RESERVED_KEYS = [
@@ -134,6 +142,8 @@ export async function cloudSecretsPush(options: {
     loadUserSecrets,
     getAvailableEnvironments,
     hasAuthTemplate,
+    getSecretScope,
+    SHARED_SECRET_SCOPE,
   } = getContext();
 
   logger.info('Cloud Secrets: Push secrets to cloud environment');
@@ -148,6 +158,7 @@ export async function cloudSecretsPush(options: {
 
   // Step 2: Load framework config
   const config = loadFrameworkConfig();
+  const adminEmailsScope = getSecretScope(ADMIN_EMAILS_KEY, config);
 
   // Step 3: Get provider from config
   const provider = config.cloud?.provider as CloudProvider | 'local' | null;
@@ -208,8 +219,8 @@ export async function cloudSecretsPush(options: {
     if (key.startsWith('$') || typeof value !== 'string') {
       continue;
     }
-    // Skip non-cloud secrets
-    if (key === 'NODE_ENV' || key === 'SECRETS_PROVIDER') {
+    // Skip secrets only local development uses
+    if (isLocalOnlySecret(key)) {
       continue;
     }
     // Skip all *_URL keys — service URLs are set after deployment,
@@ -259,54 +270,127 @@ export async function cloudSecretsPush(options: {
     }
   }
 
-  logger.loading(
-    `Loaded ${Object.keys(userSecrets).length} user secrets from .secrets.user.json`,
+  // Values in a backend service's section belong to that service's scope.
+  // ADMIN_EMAILS has its own step (D) wherever it is written.
+  const serviceUserSecrets = userSecretsFile
+    ? listServiceUserSecrets(userSecretsFile, config)
+    : [];
+  const scopedUserSecrets = serviceUserSecrets.filter(
+    ({ key }) => key !== ADMIN_EMAILS_KEY,
   );
+  const localAdminEmails =
+    userSecrets[ADMIN_EMAILS_KEY]?.trim() ||
+    serviceUserSecrets
+      .find(
+        ({ key, scope }) =>
+          key === ADMIN_EMAILS_KEY && scope === adminEmailsScope,
+      )
+      ?.value.trim();
+
+  logger.loading(
+    `Loaded ${Object.keys(userSecrets).length} user secrets from .secrets.user.json` +
+      (serviceUserSecrets.length > 0
+        ? ` (+${serviceUserSecrets.length} in service sections)`
+        : ''),
+  );
+  for (const { section, keys, reason } of userSecretsFile
+    ? listUnreadUserSecretSections(userSecretsFile, config)
+    : []) {
+    logger.warn(
+      `Not pushed: ${keys.join(', ')} in the "${section}" section (${reason})`,
+    );
+  }
   logger.newline();
 
-  // Step 7: Push framework secrets in parallel
+  // Step 7: Push framework secrets in parallel. A secret only one service
+  // reads (the auth secrets) goes to that service's scope.
   logger.updating('Pushing framework secrets...');
   logger.newline();
 
   const frameworkKeys = Object.keys(frameworkSecretsToUpload);
-  const frameworkPromises = frameworkKeys.map((key, index) => {
-    const value = frameworkSecretsToUpload[key];
-    const progress = `[${index + 1}/${frameworkKeys.length}]`;
+  const hasScopedKeys = frameworkKeys.some(
+    (key) => getSecretScope(key, config) !== SHARED_SECRET_SCOPE,
+  );
+  const scopedStore = hasScopedKeys
+    ? createSecretStoreReader({
+        provider,
+        projectRoot,
+        projectName: config.project.name,
+        env: selectedEnv,
+      })
+    : null;
 
-    logger.info(`${progress} ${key}`);
+  const pushFrameworkSecret = async (
+    key: string,
+    progress: string,
+  ): Promise<void> => {
+    const scope = getSecretScope(key, config);
 
-    return cloudSecretsSet(key, undefined, {
-      value,
+    if (!scopedStore || scope === SHARED_SECRET_SCOPE) {
+      logger.info(`${progress} ${key}`);
+      await cloudSecretsSet(key, undefined, {
+        value: frameworkSecretsToUpload[key],
+        env: selectedEnv,
+        overwrite: false,
+        internal: true,
+      });
+      return;
+    }
+
+    // An environment from before the scope existed keeps its shared value
+    const plan = await planScopedSecretPush(
+      scopedStore,
+      key,
+      scope,
+      frameworkSecretsToUpload[key],
+    );
+    if (plan.action === 'skip') {
+      logger.info(`${progress} ${key} (${scope}, already set)`);
+      return;
+    }
+    logger.info(
+      plan.action === 'copy'
+        ? `${progress} ${key} (${scope}, value kept from shared)`
+        : `${progress} ${key} (${scope})`,
+    );
+    await cloudSecretsSet(key, undefined, {
+      value: plan.value,
       env: selectedEnv,
+      service: scope,
       overwrite: false,
       internal: true,
-    }).catch((error) => {
-      return { error, key };
     });
-  });
+  };
+
+  const frameworkPromises = frameworkKeys.map((key, index) =>
+    pushFrameworkSecret(key, `[${index + 1}/${frameworkKeys.length}]`).then(
+      () => null,
+      (error: unknown) => ({
+        key,
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    ),
+  );
 
   const frameworkResults = await Promise.all(frameworkPromises);
-
-  let frameworkPushed = 0;
-  let frameworkFailed = 0;
-
-  for (const result of frameworkResults) {
-    if (result && 'error' in result) {
-      frameworkFailed++;
-    } else {
-      frameworkPushed++;
-    }
-  }
+  const frameworkFailures = frameworkResults.filter(
+    (result): result is { key: string; message: string } => result !== null,
+  );
+  const frameworkPushed = frameworkKeys.length - frameworkFailures.length;
 
   logger.newline();
   logger.summary('Framework secrets push complete:');
   logger.success(`   Pushed: ${frameworkPushed}`);
-  if (frameworkFailed > 0) {
-    logger.error(`   Failed: ${frameworkFailed}`);
+  if (frameworkFailures.length > 0) {
+    logger.error(`   Failed: ${frameworkFailures.length}`);
+    for (const { key, message } of frameworkFailures) {
+      logger.error(`      ${key}: ${message.split('\n')[0]}`);
+    }
     logger.newline();
     logger.error(
-      'Framework secrets push failed. Check your cloud provider credentials and secret store access.',
+      'Framework secrets push failed. Check your cloud provider credentials and secret store access. The first error in full:',
     );
+    logger.info(frameworkFailures[0].message);
     process.exit(1);
   }
   logger.newline();
@@ -315,7 +399,7 @@ export async function cloudSecretsPush(options: {
   // auto-derived, or local only). ADMIN_EMAILS is handled separately
   // (auth-service scope).
   const keysToSkip = new Set<string>([
-    ...(LOCAL_ONLY_KEYS as readonly string[]),
+    ...LOCAL_ONLY_SECRET_KEYS,
     ...(FRAMEWORK_DEFAULT_KEYS as readonly string[]),
     ...(DOMAIN_DERIVED_KEYS as readonly string[]),
     ADMIN_EMAILS_KEY,
@@ -398,8 +482,10 @@ export async function cloudSecretsPush(options: {
             internal: true,
           });
           logger.success(`   ${key} = ${value}`);
-        } catch {
-          // overwrite: false will warn and skip if exists
+        } catch (error: unknown) {
+          logger.error(
+            `   Failed ${key}: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       }
 
@@ -420,17 +506,20 @@ export async function cloudSecretsPush(options: {
     // Name the user secrets from .secrets.user.json that the cloud still
     // lacks, so CI logs and agents know exactly what to set. Without a local
     // file (CI), fall back to the general instructions.
-    const userKeysToCheck = Object.keys(userSecrets).filter(
-      (key) => !keysToSkip.has(key),
-    );
-    let missingUserKeys: string[] | null = null;
+    const userKeysToCheck = [
+      ...Object.keys(userSecrets)
+        .filter((key) => !keysToSkip.has(key))
+        .map((key) => ({ key, scope: getSecretScope(key, config) })),
+      ...scopedUserSecrets.map(({ key, scope }) => ({ key, scope })),
+    ];
+    let missingUserKeys: Array<{ key: string; scope: string }> | null = null;
 
     if (store && userKeysToCheck.length > 0) {
       try {
-        const missing: string[] = [];
-        for (const key of userKeysToCheck) {
-          if (!(await store.exists(key))) {
-            missing.push(key);
+        const missing: Array<{ key: string; scope: string }> = [];
+        for (const entry of userKeysToCheck) {
+          if (!(await store.exists(entry.key, entry.scope))) {
+            missing.push(entry);
           }
         }
         missingUserKeys = missing;
@@ -446,13 +535,19 @@ export async function cloudSecretsPush(options: {
       logger.info(`  npx tsdevstack cloud-secrets:push --env ${selectedEnv}`);
       logger.info('  Or set directly in cloud provider console');
     } else if (missingUserKeys.length > 0) {
+      const scopeFlag = (scope: string): string =>
+        scope === SHARED_SECRET_SCOPE ? '' : ` --service ${scope}`;
       logger.warn(
-        `User secrets not set in ${selectedEnv}: ${missingUserKeys.join(', ')}`,
+        `User secrets not set in ${selectedEnv}: ${missingUserKeys
+          .map(({ key, scope }) =>
+            scope === SHARED_SECRET_SCOPE ? key : `${key} (${scope})`,
+          )
+          .join(', ')}`,
       );
       logger.info('Set each before the first deployment:');
-      for (const key of missingUserKeys) {
+      for (const { key, scope } of missingUserKeys) {
         logger.info(
-          `  npx tsdevstack cloud-secrets:set ${key} --env ${selectedEnv}`,
+          `  npx tsdevstack cloud-secrets:set ${key}${scopeFlag(scope)} --env ${selectedEnv}`,
         );
       }
     } else {
@@ -462,11 +557,14 @@ export async function cloudSecretsPush(options: {
     }
     if (hasAuthTemplate(config)) {
       logger.info(
-        `  First admins (optional): npx tsdevstack cloud-secrets:set ${ADMIN_EMAILS_KEY} --service ${ADMIN_EMAILS_SCOPE} --env ${selectedEnv}`,
+        `  First admins (optional): npx tsdevstack cloud-secrets:set ${ADMIN_EMAILS_KEY} --service ${adminEmailsScope} --env ${selectedEnv}`,
       );
     }
     logger.newline();
-  } else if (Object.keys(userSecrets).length > 0) {
+  } else if (
+    Object.keys(userSecrets).length > 0 ||
+    serviceUserSecrets.length > 0
+  ) {
     logger.updating('User secrets (checking existing, prompting for new)...');
     logger.newline();
 
@@ -486,7 +584,8 @@ export async function cloudSecretsPush(options: {
       (key) => !keysToSkip.has(key) && key !== 'DOMAIN',
     );
 
-    // Helper to prompt for and push a single secret
+    // Helper to prompt for and push a single secret, to the scope it belongs
+    // to (the scope table's, or the service section it was written in)
     const promptAndPushSecret = async (
       key: string,
       counters: {
@@ -495,19 +594,22 @@ export async function cloudSecretsPush(options: {
         existing: number;
         failed: number;
       },
-      scope?: string,
+      sectionScope?: string,
     ): Promise<void> => {
-      const alreadyExists = await store.exists(key, scope);
+      const keyScope = sectionScope ?? getSecretScope(key, config);
+      const scope = keyScope === SHARED_SECRET_SCOPE ? undefined : keyScope;
+      const label = scope ? `${key} (${scope})` : key;
+      const alreadyExists = await store.exists(key, keyScope);
 
       if (alreadyExists) {
-        logger.info(`${key}`);
+        logger.info(label);
         logger.success(`   Already exists in ${selectedEnv}`);
         logger.newline();
         counters.existing++;
         return;
       }
 
-      logger.info(`${key}`);
+      logger.info(label);
 
       const hint = getEnvironmentHint(key);
       if (hint) {
@@ -677,24 +779,24 @@ export async function cloudSecretsPush(options: {
       logger.newline();
     }
 
-    // Step C: Prompt for remaining user-specific secrets
+    // Step C: Prompt for remaining user-specific secrets, then those written
+    // in a backend service's section (to that service's scope)
     for (const key of promptableKeys) {
       await promptAndPushSecret(key, counters);
+    }
+    for (const { key, scope } of scopedUserSecrets) {
+      await promptAndPushSecret(key, counters, scope);
     }
 
     // Step D: ADMIN_EMAILS (auth template). Only offered when the developer
     // filled it locally, so an environment that is already set up gets no
     // new prompt.
     if (hasAuthTemplate(config)) {
-      if (userSecrets[ADMIN_EMAILS_KEY]?.trim()) {
-        await promptAndPushSecret(
-          ADMIN_EMAILS_KEY,
-          counters,
-          ADMIN_EMAILS_SCOPE,
-        );
+      if (localAdminEmails) {
+        await promptAndPushSecret(ADMIN_EMAILS_KEY, counters);
       } else {
         logger.info(
-          `${ADMIN_EMAILS_KEY} (optional, first admins): npx tsdevstack cloud-secrets:set ${ADMIN_EMAILS_KEY} --service ${ADMIN_EMAILS_SCOPE} --env ${selectedEnv}`,
+          `${ADMIN_EMAILS_KEY} (optional, first admins): npx tsdevstack cloud-secrets:set ${ADMIN_EMAILS_KEY} --service ${adminEmailsScope} --env ${selectedEnv}`,
         );
         logger.newline();
       }

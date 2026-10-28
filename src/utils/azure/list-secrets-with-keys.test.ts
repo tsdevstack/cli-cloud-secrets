@@ -58,6 +58,51 @@ describe('listSecretsWithKeys', () => {
     rs.clearAllMocks();
   });
 
+  describe('Service vaults', () => {
+    it('should list the shared vault and every existing service vault', async () => {
+      rs.mocked(loadAzureCredentials).mockReturnValue(mockCredentials);
+      (
+        globalThis as unknown as {
+          contextMocks: { keyVaultExists: ReturnType<typeof rs.fn> };
+        }
+      ).contextMocks.keyVaultExists.mockImplementation(
+        async (_c, _p, _e, scope) => scope === 'auth-service',
+      );
+      rs.mocked(createAzureClient).mockImplementation(
+        (_c, _p, _e, scope) =>
+          ({ scope: scope ?? 'shared' }) as unknown as ReturnType<
+            typeof createAzureClient
+          >,
+      );
+      rs.mocked(listSecrets).mockImplementation(
+        async (client): Promise<Record<string, string>> =>
+          (client as unknown as { scope: string }).scope === 'shared'
+            ? { 'test-project-shared-KONG-TRUST-TOKEN': 'v' }
+            : { 'test-project-auth-service-ADMIN-EMAILS': 'v' },
+      );
+
+      const result = await listSecretsWithKeys(
+        mockProjectRoot,
+        mockEnv,
+        mockProjectName,
+        ['auth-service', 'offers-service'],
+      );
+
+      expect(result).toEqual([
+        { key: 'KONG_TRUST_TOKEN', scope: 'shared' },
+        { key: 'ADMIN_EMAILS', scope: 'auth-service' },
+      ]);
+      // offers-service has no vault yet: not read
+      expect(createAzureClient).toHaveBeenCalledTimes(2);
+      expect(createAzureClient).not.toHaveBeenCalledWith(
+        mockCredentials,
+        mockProjectName,
+        mockEnv,
+        'offers-service',
+      );
+    });
+  });
+
   describe('Standard use cases', () => {
     it('should list shared secrets with keys converted to underscores', async () => {
       mockSecrets({
@@ -85,6 +130,7 @@ describe('listSecretsWithKeys', () => {
         mockCredentials,
         mockProjectName,
         mockEnv,
+        undefined,
       );
       expect(listSecrets).toHaveBeenCalledWith(mockClient, mockProjectName);
     });

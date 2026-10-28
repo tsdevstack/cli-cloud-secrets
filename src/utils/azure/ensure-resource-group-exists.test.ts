@@ -4,8 +4,9 @@ import type { AzureCredentials } from '../types';
 const mockGet = rs.fn();
 const mockCreateOrUpdate = rs.fn();
 
-rs.mock('./create-azure-credential', () => ({
-  createAzureCredential: rs.fn(() => ({})),
+rs.mock('../../context', () => ({
+  getContext: () =>
+    (globalThis as unknown as { contextMocks: unknown }).contextMocks,
 }));
 
 rs.mock('@azure/arm-resources', () => {

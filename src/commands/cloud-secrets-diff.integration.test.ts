@@ -274,6 +274,7 @@ describe('cloudSecretsDiff', () => {
         mockProjectRoot,
         'prod',
         'test-project',
+        [],
       );
       expect(mocks.logger.info).toHaveBeenCalledWith('Keys in cloud (1):');
     });
@@ -302,6 +303,43 @@ describe('cloudSecretsDiff', () => {
       );
       expect(mocks.logger.info).toHaveBeenCalledWith('   Cloud: 1');
       expect(mocks.logger.info).toHaveBeenCalledWith('   Match: 1');
+    });
+
+    it('should compare the auth secrets in the auth-service scope', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.readJsonFile.mockReturnValue({
+        secrets: { KONG_TRUST_TOKEN: 'trust' },
+        'auth-service': {
+          PORT: '3001',
+          DATABASE_URL: 'postgresql://local',
+          ADMIN_EMAILS: 'admin@shop.test',
+          JWT_PRIVATE_KEY_CURRENT: 'key',
+          secrets: [],
+        },
+      });
+      rs.mocked(listAzureSecretsWithKeys).mockResolvedValue([
+        { key: 'KONG_TRUST_TOKEN', scope: 'shared' },
+        { key: 'ADMIN_EMAILS', scope: 'auth-service' },
+        { key: 'DATABASE_URL', scope: 'auth-service' },
+        // Left in shared by an environment from before the auth scope
+        { key: 'JWT_PRIVATE_KEY_CURRENT', scope: 'shared' },
+      ]);
+
+      await cloudSecretsDiff('prod');
+
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        '   ADMIN_EMAILS (auth-service)',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        '   JWT_PRIVATE_KEY_CURRENT (auth-service): exists in local, missing in cloud',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        '   JWT_PRIVATE_KEY_CURRENT: exists in cloud, missing in local',
+      );
+      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+        '   DATABASE_URL (auth-service)',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith('   Match: 2');
     });
   });
 

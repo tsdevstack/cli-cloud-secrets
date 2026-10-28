@@ -9,7 +9,6 @@
  */
 
 import { getContext } from '../../context';
-import { createAzureCredential } from './create-azure-credential';
 import { ResourceManagementClient } from '@azure/arm-resources';
 import type { AzureCredentials } from '../types';
 
@@ -25,7 +24,8 @@ export interface RegisterResourceProvidersResult {
 export async function registerResourceProviders(
   azureCredentials: AzureCredentials,
 ): Promise<RegisterResourceProvidersResult> {
-  const { AZURE_REQUIRED_RESOURCE_PROVIDERS } = getContext();
+  const { AZURE_REQUIRED_RESOURCE_PROVIDERS, createAzureCredential } =
+    getContext();
   const unregistered: string[] = [];
   const registering: string[] = [];
 

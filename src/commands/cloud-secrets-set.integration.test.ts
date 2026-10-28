@@ -32,8 +32,10 @@ rs.mock('../utils/azure/load-azure-credentials', { mock: true });
 rs.mock('../utils/azure/create-azure-client', { mock: true });
 rs.mock('../utils/azure/secret-exists', { mock: true });
 rs.mock('../utils/azure/set-secret', { mock: true });
+rs.mock('../utils/read-stdin', { mock: true });
 
 import inquirer from 'inquirer';
+import { readStdin } from '../utils/read-stdin';
 import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';
 import { createGCPClient } from '../utils/gcp/client-factory';
 import { secretExists } from '../utils/gcp/secret-exists';
@@ -245,6 +247,65 @@ describe('cloudSecretsSet', () => {
     });
   });
 
+  describe('Value from standard input', () => {
+    beforeEach(() => {
+      mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
+      mocks.loadFrameworkConfig.mockReturnValue(
+        mockConfig as ReturnType<typeof mocks.loadFrameworkConfig>,
+      );
+      mocks.getAvailableEnvironments.mockReturnValue(['dev']);
+      mocks.loadFrameworkSecrets.mockReturnValue({ secrets: {} } as ReturnType<
+        typeof mocks.loadFrameworkSecrets
+      >);
+      mocks.buildSecretName.mockReturnValue('test-project-shared-API_KEY');
+      rs.mocked(loadGCPCredentials).mockReturnValue({
+        project_id: 'test-gcp',
+      } as ReturnType<typeof loadGCPCredentials>);
+      rs.mocked(createGCPClient).mockReturnValue(
+        {} as ReturnType<typeof createGCPClient>,
+      );
+      rs.mocked(secretExists).mockResolvedValue(false);
+      rs.mocked(setGCPSecret).mockResolvedValue({ success: true, isNew: true });
+    });
+
+    it('should read the value from standard input with --stdin', async () => {
+      rs.mocked(readStdin).mockReturnValue('piped-value');
+
+      await cloudSecretsSet('API_KEY', undefined, { env: 'dev', stdin: true });
+
+      expect(setGCPSecret).toHaveBeenCalledWith(
+        {},
+        'test-gcp',
+        'test-project',
+        'test-project-shared-API_KEY',
+        'piped-value',
+      );
+      expect(inquirer.prompt).not.toHaveBeenCalled();
+    });
+
+    it('should not read standard input without --stdin', async () => {
+      await cloudSecretsSet('API_KEY', undefined, {
+        env: 'dev',
+        value: 'given',
+      });
+
+      expect(readStdin).not.toHaveBeenCalled();
+    });
+
+    it('should reject empty standard input', async () => {
+      rs.mocked(readStdin).mockReturnValue('');
+
+      await expect(
+        cloudSecretsSet('API_KEY', undefined, { env: 'dev', stdin: true }),
+      ).rejects.toThrow('process.exit');
+      expect(inquirer.prompt).not.toHaveBeenCalled();
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        'Secret value cannot be empty',
+      );
+      expect(setGCPSecret).not.toHaveBeenCalled();
+    });
+  });
+
   describe('GCP provider', () => {
     beforeEach(() => {
       mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
@@ -382,6 +443,72 @@ describe('cloudSecretsSet', () => {
     });
   });
 
+  describe('Scope', () => {
+    beforeEach(() => {
+      mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
+      mocks.loadFrameworkConfig.mockReturnValue(
+        mockConfig as ReturnType<typeof mocks.loadFrameworkConfig>,
+      );
+      mocks.loadFrameworkSecrets.mockReturnValue({ secrets: {} } as ReturnType<
+        typeof mocks.loadFrameworkSecrets
+      >);
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.buildSecretName.mockImplementation(
+        (project: string, scope: string, key: string) =>
+          `${project}-${scope}-${key}`,
+      );
+      rs.mocked(loadGCPCredentials).mockReturnValue({
+        project_id: 'test-gcp-project',
+      } as ReturnType<typeof loadGCPCredentials>);
+      rs.mocked(createGCPClient).mockReturnValue(
+        {} as ReturnType<typeof createGCPClient>,
+      );
+      rs.mocked(secretExists).mockResolvedValue(false);
+      rs.mocked(setGCPSecret).mockResolvedValue({ success: true, isNew: true });
+    });
+
+    it("should write an auth secret to the auth-service's scope by default", async () => {
+      await cloudSecretsSet('ADMIN_EMAILS', undefined, {
+        env: 'dev',
+        value: 'admin@shop.test',
+      });
+
+      expect(mocks.logger.loading).toHaveBeenCalledWith('Scope: auth-service');
+      expect(setGCPSecret).toHaveBeenCalledWith(
+        {},
+        'test-gcp-project',
+        'test-project',
+        'test-project-auth-service-ADMIN_EMAILS',
+        'admin@shop.test',
+      );
+    });
+
+    it('should write any other secret to shared by default', async () => {
+      await cloudSecretsSet('STRIPE_KEY', undefined, {
+        env: 'dev',
+        value: 'sk_test',
+      });
+
+      expect(mocks.logger.loading).toHaveBeenCalledWith('Scope: shared');
+    });
+
+    it('should write to the scope --service names', async () => {
+      await cloudSecretsSet('STRIPE_KEY', undefined, {
+        env: 'dev',
+        value: 'sk_test',
+        service: 'offers-service',
+      });
+
+      expect(setGCPSecret).toHaveBeenCalledWith(
+        {},
+        'test-gcp-project',
+        'test-project',
+        'test-project-offers-service-STRIPE_KEY',
+        'sk_test',
+      );
+    });
+  });
+
   describe('AWS provider', () => {
     beforeEach(() => {
       mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
@@ -479,6 +606,7 @@ describe('cloudSecretsSet', () => {
         mockCredentials,
         'test-project',
         'prod',
+        'shared',
       );
       expect(transformKeyForAzure).toHaveBeenCalledWith(
         'test-project-shared-REDIS-URL',
@@ -487,6 +615,98 @@ describe('cloudSecretsSet', () => {
       expect(mocks.logger.success).toHaveBeenCalledWith(
         'Created new secret REDIS_URL in prod',
       );
+      expect(mocks.ensureKeyVaultExists).not.toHaveBeenCalled();
+    });
+
+    it("should create a service's vault on the first write to its scope", async () => {
+      const mockCredentials = {
+        tenantId: 't',
+        clientId: 'c',
+        clientSecret: 's',
+      };
+      rs.mocked(loadAzureCredentials).mockReturnValue(
+        mockCredentials as ReturnType<typeof loadAzureCredentials>,
+      );
+      mocks.ensureKeyVaultExists.mockResolvedValue({
+        exists: true,
+        created: true,
+      });
+      rs.mocked(createAzureClient).mockReturnValue(
+        {} as ReturnType<typeof createAzureClient>,
+      );
+      rs.mocked(secretExistsAzure).mockResolvedValue(false);
+      rs.mocked(setAzureSecret).mockResolvedValue({
+        success: true,
+        isNew: true,
+      });
+
+      await cloudSecretsSet('STRIPE_KEY', undefined, {
+        env: 'prod',
+        value: 'sk_live',
+        service: 'offers-service',
+      });
+
+      expect(mocks.ensureKeyVaultExists).toHaveBeenCalledWith(
+        'test-project',
+        'prod',
+        mockCredentials,
+        'offers-service',
+      );
+      expect(createAzureClient).toHaveBeenCalledWith(
+        mockCredentials,
+        'test-project',
+        'prod',
+        'offers-service',
+      );
+    });
+
+    it("should stop when the service's vault cannot be created", async () => {
+      rs.mocked(loadAzureCredentials).mockReturnValue(
+        {} as ReturnType<typeof loadAzureCredentials>,
+      );
+      mocks.ensureKeyVaultExists.mockResolvedValue({
+        exists: false,
+        created: false,
+        error: 'Forbidden',
+      });
+
+      await expect(
+        cloudSecretsSet('STRIPE_KEY', undefined, {
+          env: 'prod',
+          value: 'sk_live',
+          service: 'offers-service',
+        }),
+      ).rejects.toThrow('process.exit');
+
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        'Failed to create the Key Vault for offers-service',
+      );
+      expect(setAzureSecret).not.toHaveBeenCalled();
+    });
+
+    it("should throw when the service's vault cannot be created for an internal caller", async () => {
+      rs.mocked(loadAzureCredentials).mockReturnValue(
+        {} as ReturnType<typeof loadAzureCredentials>,
+      );
+      mocks.ensureKeyVaultExists.mockResolvedValue({
+        exists: false,
+        created: false,
+        error: 'Forbidden',
+      });
+
+      await expect(
+        cloudSecretsSet('STRIPE_KEY', undefined, {
+          env: 'prod',
+          value: 'sk_live',
+          service: 'offers-service',
+          internal: true,
+        }),
+      ).rejects.toThrow(
+        'Failed to create the Key Vault for offers-service: Forbidden',
+      );
+
+      expect(processExitSpy).not.toHaveBeenCalled();
+      expect(setAzureSecret).not.toHaveBeenCalled();
     });
   });
 
@@ -531,6 +751,31 @@ describe('cloudSecretsSet', () => {
         'Failed to push secret to cloud',
       );
       expect(processExitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('should throw the reason instead of exiting for an internal caller', async () => {
+      rs.mocked(loadGCPCredentials).mockReturnValue({
+        project_id: 'test-gcp-project',
+      } as ReturnType<typeof loadGCPCredentials>);
+      rs.mocked(createGCPClient).mockReturnValue(
+        {} as ReturnType<typeof createGCPClient>,
+      );
+      rs.mocked(secretExists).mockResolvedValue(false);
+      rs.mocked(setGCPSecret).mockResolvedValue({
+        success: false,
+        isNew: false,
+        error: 'Permission denied',
+      });
+
+      await expect(
+        cloudSecretsSet('API_KEY', undefined, {
+          env: 'dev',
+          value: 'secret-value',
+          internal: true,
+        }),
+      ).rejects.toThrow('Failed to push secret to cloud: Permission denied');
+
+      expect(processExitSpy).not.toHaveBeenCalled();
     });
   });
 });

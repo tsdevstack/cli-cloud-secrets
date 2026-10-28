@@ -36,7 +36,6 @@ import { testAllGCPEnvironments } from '../utils/gcp/testing';
 import { testAllAWSEnvironments } from '../utils/aws/testing';
 import {
   testAllAzureEnvironments,
-  ensureKeyVaultExists,
   registerResourceProviders,
 } from '../utils/azure/testing';
 
@@ -54,6 +53,7 @@ export async function cloudInit(providerOption?: string): Promise<void> {
     loadCredentialsFile,
     validateDuplicateCredentials,
     CLOUD_PROVIDERS,
+    ensureKeyVaultExists,
   } = getContext();
 
   logger.info('Cloud Secrets: Initialize cloud provider integration');

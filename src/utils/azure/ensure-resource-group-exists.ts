@@ -2,8 +2,8 @@
  * Ensure resource group exists, creating it if necessary
  */
 
-import { createAzureCredential } from './create-azure-credential';
 import { ResourceManagementClient } from '@azure/arm-resources';
+import { getContext } from '../../context';
 import type { AzureCredentials } from '../types';
 
 export async function ensureResourceGroupExists(
@@ -16,6 +16,7 @@ export async function ensureResourceGroupExists(
     const location = azureCredentials.location;
 
     // Create credentials and resource management client
+    const { createAzureCredential } = getContext();
     const credential = createAzureCredential(azureCredentials);
 
     const resourceClient = new ResourceManagementClient(

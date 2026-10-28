@@ -11,6 +11,7 @@
  *   npx tsdevstack cloud-secrets:set <KEY> --value <VALUE> --env staging
  *   npx tsdevstack cloud-secrets:set DATABASE_URL --value "postgresql://..." --env prod --overwrite
  *   npx tsdevstack cloud-secrets:set DATABASE_URL --service auth-service --env dev
+ *   printf '%s' "$VALUE" | npx tsdevstack cloud-secrets:set KEY --stdin --env prod
  *
  * Prerequisites:
  * - cloud:init must have been run
@@ -28,6 +29,7 @@
 import { getContext } from '../context';
 import type { CloudProvider } from '@tsdevstack/cli/plugin';
 import inquirer from 'inquirer';
+import { readStdin } from '../utils/read-stdin';
 import { promptSecretValue } from '../utils/prompt-secret-value';
 import type { CloudSecretResult } from '../utils/types';
 import { loadGCPCredentials } from '../utils/gcp/load-gcp-credentials';
@@ -54,6 +56,7 @@ export async function cloudSecretsSet(
   positionalValue: string | undefined,
   options: {
     value?: string;
+    stdin?: boolean;
     env?: string;
     service?: string;
     overwrite?: boolean;
@@ -67,9 +70,24 @@ export async function cloudSecretsSet(
     loadFrameworkSecrets,
     getAvailableEnvironments,
     buildSecretName,
+    getSecretScope,
+    SHARED_SECRET_SCOPE,
+    ensureKeyVaultExists,
+    CliError,
   } = getContext();
 
   const internal = options.internal ?? false;
+
+  // A failed write ends a direct run. Internal callers (push, migrate) get
+  // an error instead, so one failure doesn't stop their other writes.
+  const failWrite = (message: string, detail: string | undefined): never => {
+    if (internal) {
+      throw new CliError(`${message}: ${detail}`, 'Cloud Secrets');
+    }
+    logger.error(message);
+    logger.info(`Error: ${detail}`);
+    process.exit(1);
+  };
   logger.info('Cloud Secrets: Set or update a secret');
   logger.newline();
 
@@ -142,8 +160,8 @@ export async function cloudSecretsSet(
     logger.newline();
   }
 
-  // Determine scope (service-specific or shared)
-  const scope = options.service || 'shared';
+  // Without --service, the scope the secret belongs to (auth secrets: auth-service)
+  const scope = options.service || getSecretScope(key, config);
 
   logger.loading(`Provider: ${provider.toUpperCase()}`);
   logger.loading(`Project: ${projectName}`);
@@ -177,9 +195,13 @@ export async function cloudSecretsSet(
     }
   }
 
-  // Step 7: Get secret value (positional > --value option > prompt)
-  let value = positionalValue ?? options.value;
-  if (!value && !internal) {
+  // Step 7: Get secret value (positional > --value > --stdin > prompt).
+  // --stdin keeps the value out of the process list.
+  let value =
+    positionalValue ??
+    options.value ??
+    (options.stdin ? readStdin() : undefined);
+  if (!value && !internal && !options.stdin) {
     // Credentials are masked; DOMAIN, EMAIL_FROM, ADMIN_EMAILS stay visible
     value = await promptSecretValue(key, `Enter value for ${key}:`);
   }
@@ -206,7 +228,24 @@ export async function cloudSecretsSet(
     awsClient = createAWSClient(awsCredentials);
   } else {
     azureCredentials = loadAzureCredentials(projectRoot, selectedEnv);
-    azureClient = createAzureClient(azureCredentials, projectName, selectedEnv);
+    // Each service scope has its own vault; the first write creates it
+    if (scope !== SHARED_SECRET_SCOPE) {
+      const vault = await ensureKeyVaultExists(
+        projectName,
+        selectedEnv,
+        azureCredentials,
+        scope,
+      );
+      if (!vault.exists) {
+        failWrite(`Failed to create the Key Vault for ${scope}`, vault.error);
+      }
+    }
+    azureClient = createAzureClient(
+      azureCredentials,
+      projectName,
+      selectedEnv,
+      scope,
+    );
   }
 
   // Step 9: Check if secret exists in cloud
@@ -283,9 +322,7 @@ export async function cloudSecretsSet(
   }
 
   if (!result.success) {
-    logger.error('Failed to push secret to cloud');
-    logger.info(`Error: ${result.error}`);
-    process.exit(1);
+    failWrite('Failed to push secret to cloud', result.error);
   }
 
   // Step 11: Show result

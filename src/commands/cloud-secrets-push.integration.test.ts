@@ -184,6 +184,33 @@ describe('cloudSecretsPush', () => {
       // Service URLs are NOT generated here - they're synced after deployment via infra:service-deploy
     });
 
+    it('should not push secrets only local development uses', async () => {
+      mocks.generateFrameworkSecretsFile.mockReturnValue({
+        secrets: {
+          STORAGE_ENDPOINT: 'http://localhost:9000',
+          STORAGE_ACCESS_KEY: 'local-access',
+          STORAGE_SECRET_KEY: 'local-secret',
+          STORAGE_FORCE_PATH_STYLE: 'true',
+          STORAGE_BUCKET_UPLOADS: 'uploads',
+          DB_AUTH_USERNAME: 'auth',
+          DB_AUTH_PASSWORD: 'db-password',
+        },
+      } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'dev' });
+
+      const pushed = rs.mocked(cloudSecretsSet).mock.calls.map(([key]) => key);
+      expect(pushed).toContain('STORAGE_BUCKET_UPLOADS');
+      // infra:deploy reads the database passwords on GCP
+      expect(pushed).toContain('DB_AUTH_PASSWORD');
+      expect(pushed).not.toContain('STORAGE_ENDPOINT');
+      expect(pushed).not.toContain('STORAGE_ACCESS_KEY');
+      expect(pushed).not.toContain('STORAGE_SECRET_KEY');
+      expect(pushed).not.toContain('STORAGE_FORCE_PATH_STYLE');
+      expect(pushed).not.toContain('DB_AUTH_USERNAME');
+    });
+
     it('should filter out metadata, non-string values, REDIS_*, and *_URL keys', async () => {
       mocks.generateFrameworkSecretsFile.mockReturnValue({
         secrets: {
@@ -296,7 +323,9 @@ describe('cloudSecretsPush', () => {
       // Second call fails, rest succeed
       rs.mocked(cloudSecretsSet)
         .mockResolvedValueOnce(undefined) // SECRET_1
-        .mockRejectedValueOnce(new Error('Permission denied')) // SECRET_2
+        .mockRejectedValueOnce(
+          new Error('Permission denied\nAction: setSecret'),
+        ) // SECRET_2
         .mockResolvedValue(undefined); // all remaining
 
       await expect(cloudSecretsPush({ env: 'dev' })).rejects.toThrow(
@@ -305,6 +334,13 @@ describe('cloudSecretsPush', () => {
 
       expect(processExitSpy).toHaveBeenCalledWith(1);
       expect(mocks.logger.error).toHaveBeenCalledWith('   Failed: 1');
+      // Each failed key with the first line of its error, then the first error in full
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        '      SECRET_2: Permission denied',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        'Permission denied\nAction: setSecret',
+      );
     });
   });
 
@@ -359,6 +395,55 @@ describe('cloudSecretsPush', () => {
           env: 'prod',
         }),
       );
+    });
+
+    it("should prompt for a backend service's own secret and push it to that service's scope", async () => {
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: {},
+        'api-service': { STRIPE_API_KEY: 'sk_test_local', secrets: [] },
+      } as unknown as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(inquirer.prompt).mockResolvedValueOnce({ value: 'sk_live' });
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(inquirer.prompt).toHaveBeenCalledTimes(1);
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        'STRIPE_API_KEY (api-service)',
+      );
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'STRIPE_API_KEY',
+        undefined,
+        expect.objectContaining({
+          value: 'sk_live',
+          env: 'prod',
+          service: 'api-service',
+        }),
+      );
+    });
+
+    it('should name values in a frontend section, which nothing reads in the cloud', async () => {
+      mocks.loadFrameworkConfig.mockReturnValue({
+        ...mockConfig,
+        services: [
+          ...mockConfig.services,
+          { name: 'frontend', type: 'nextjs', port: 3000 },
+        ],
+      } as unknown as ReturnType<typeof mocks.loadFrameworkConfig>);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: {},
+        frontend: { ANALYTICS_ID: 'GA-1' },
+      } as unknown as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Not pushed: ANALYTICS_ID in the "frontend" section',
+        ),
+      );
+      expect(inquirer.prompt).not.toHaveBeenCalled();
     });
 
     it('should skip auto-managed keys (local-only, TTLs, domain-derived)', async () => {
@@ -615,6 +700,25 @@ describe('cloudSecretsPush', () => {
       );
     });
 
+    it("should list a service's own missing secret with --service in --skip-user-secrets mode", async () => {
+      mocks.hasAuthTemplate.mockReturnValue(false);
+      mocks.loadUserSecrets.mockReturnValue({
+        secrets: { RESEND_API_KEY: 're_local' },
+        'api-service': { STRIPE_API_KEY: 'sk_test_local' },
+      } as unknown as ReturnType<typeof mocks.loadUserSecrets>);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+
+      await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
+
+      expect(inquirer.prompt).not.toHaveBeenCalled();
+      expect(mocks.logger.warn).toHaveBeenCalledWith(
+        'User secrets not set in prod: RESEND_API_KEY, STRIPE_API_KEY (api-service)',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        '  npx tsdevstack cloud-secrets:set STRIPE_API_KEY --service api-service --env prod',
+      );
+    });
+
     it('should derive from DOMAIN and report all user secrets set with --skip-user-secrets', async () => {
       mocks.hasAuthTemplate.mockReturnValue(false);
       mocks.loadUserSecrets.mockReturnValue({
@@ -665,6 +769,140 @@ describe('cloudSecretsPush', () => {
       await cloudSecretsPush({ env: 'prod' });
 
       expect(mocks.logger.info).toHaveBeenCalledWith('No user secrets to push');
+    });
+  });
+
+  describe('Auth secrets scope', () => {
+    // A GCP project holding these secret IDs (names without the project path)
+    const gcpClientWith = (stored: Record<string, string>) =>
+      ({
+        getSecret: rs.fn(async ({ name }: { name: string }) => {
+          const id = name.split('/secrets/')[1];
+          if (!(id in stored)) {
+            throw Object.assign(new Error('NOT_FOUND'), { code: 5 });
+          }
+          return [{ name }];
+        }),
+        accessSecretVersion: rs.fn(async ({ name }: { name: string }) => {
+          const id = name.split('/secrets/')[1].split('/versions/')[0];
+          if (!(id in stored)) {
+            throw Object.assign(new Error('NOT_FOUND'), { code: 5 });
+          }
+          return [{ payload: { data: Buffer.from(stored[id]) } }];
+        }),
+      }) as unknown as ReturnType<typeof createGCPClient>;
+
+    beforeEach(() => {
+      mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
+      mocks.loadFrameworkConfig.mockReturnValue(
+        mockConfig as ReturnType<typeof mocks.loadFrameworkConfig>,
+      );
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.loadCredentialsFile.mockReturnValue({
+        prod: { project_id: 'gcp-prod' },
+      });
+      mocks.buildSecretName.mockImplementation(
+        (project: string, scope: string, key: string) =>
+          `${project}-${scope}-${key}`,
+      );
+      mocks.generateFrameworkSecretsFile.mockReturnValue({
+        secrets: {
+          KONG_TRUST_TOKEN: 'trust-token',
+          JWT_PRIVATE_KEY_CURRENT: 'generated-key',
+          REFRESH_TOKEN_SECRET: 'generated-refresh',
+        },
+      } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
+      mocks.loadUserSecrets.mockReturnValue(null);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+    });
+
+    it('should push the auth secrets to the auth-service scope in a new environment', async () => {
+      rs.mocked(createGCPClient).mockReturnValue(gcpClientWith({}));
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'JWT_PRIVATE_KEY_CURRENT',
+        undefined,
+        expect.objectContaining({
+          value: 'generated-key',
+          service: 'auth-service',
+          overwrite: false,
+        }),
+      );
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'KONG_TRUST_TOKEN',
+        undefined,
+        expect.not.objectContaining({ service: expect.anything() }),
+      );
+    });
+
+    it('should keep the value an existing environment holds in shared', async () => {
+      rs.mocked(createGCPClient).mockReturnValue(
+        gcpClientWith({
+          'test-project-shared-JWT_PRIVATE_KEY_CURRENT': 'existing-key',
+          'test-project-shared-REFRESH_TOKEN_SECRET': 'existing-refresh',
+        }),
+      );
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'JWT_PRIVATE_KEY_CURRENT',
+        undefined,
+        expect.objectContaining({
+          value: 'existing-key',
+          service: 'auth-service',
+        }),
+      );
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'REFRESH_TOKEN_SECRET',
+        undefined,
+        expect.objectContaining({
+          value: 'existing-refresh',
+          service: 'auth-service',
+        }),
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'JWT_PRIVATE_KEY_CURRENT (auth-service, value kept from shared)',
+        ),
+      );
+    });
+
+    it('should not write an auth secret its scope already holds', async () => {
+      rs.mocked(createGCPClient).mockReturnValue(
+        gcpClientWith({
+          'test-project-auth-service-JWT_PRIVATE_KEY_CURRENT': 'current-key',
+          'test-project-auth-service-REFRESH_TOKEN_SECRET': 'current-refresh',
+        }),
+      );
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(cloudSecretsSet).not.toHaveBeenCalledWith(
+        'JWT_PRIVATE_KEY_CURRENT',
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'KONG_TRUST_TOKEN',
+        undefined,
+        expect.anything(),
+      );
+    });
+
+    it('should push every framework secret to shared without the auth template', async () => {
+      mocks.hasAuthTemplate.mockReturnValue(false);
+
+      await cloudSecretsPush({ env: 'prod' });
+
+      expect(createGCPClient).not.toHaveBeenCalled();
+      expect(cloudSecretsSet).toHaveBeenCalledWith(
+        'JWT_PRIVATE_KEY_CURRENT',
+        undefined,
+        expect.not.objectContaining({ service: expect.anything() }),
+      );
     });
   });
 

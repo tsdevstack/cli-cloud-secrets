@@ -318,6 +318,51 @@ describe('cloudSecretsRemove', () => {
     });
   });
 
+  describe('Scope', () => {
+    const mockClient = { deleteSecret: rs.fn() };
+
+    beforeEach(() => {
+      mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
+      mocks.loadFrameworkConfig.mockReturnValue(
+        mockConfig as ReturnType<typeof mocks.loadFrameworkConfig>,
+      );
+      mocks.isFile.mockReturnValue(false);
+      mocks.hasAuthTemplate.mockReturnValue(true);
+      mocks.buildSecretName.mockImplementation(
+        (project: string, scope: string, key: string) =>
+          `${project}-${scope}-${key}`,
+      );
+      mockClient.deleteSecret.mockResolvedValue([]);
+      rs.mocked(loadGCPCredentials).mockReturnValue({
+        project_id: 'test-gcp-project',
+      } as ReturnType<typeof loadGCPCredentials>);
+      rs.mocked(createGCPClient).mockReturnValue(
+        mockClient as unknown as ReturnType<typeof createGCPClient>,
+      );
+    });
+
+    it("should remove an auth secret from the auth-service's scope by default", async () => {
+      await cloudSecretsRemove('ADMIN_EMAILS', { env: 'dev', force: true });
+
+      expect(mocks.logger.loading).toHaveBeenCalledWith('Scope: auth-service');
+      expect(mockClient.deleteSecret).toHaveBeenCalledWith({
+        name: 'projects/test-gcp-project/secrets/test-project-auth-service-ADMIN_EMAILS',
+      });
+    });
+
+    it('should remove the old shared copy with --service shared', async () => {
+      await cloudSecretsRemove('JWT_PRIVATE_KEY_CURRENT', {
+        env: 'dev',
+        force: true,
+        service: 'shared',
+      });
+
+      expect(mockClient.deleteSecret).toHaveBeenCalledWith({
+        name: 'projects/test-gcp-project/secrets/test-project-shared-JWT_PRIVATE_KEY_CURRENT',
+      });
+    });
+  });
+
   describe('AWS provider', () => {
     beforeEach(() => {
       mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
@@ -373,6 +418,7 @@ describe('cloudSecretsRemove', () => {
         'prod',
         'test-project',
         'test-project-shared-REDIS-URL',
+        'shared',
       );
       expect(mocks.logger.success).toHaveBeenCalledWith('Removed from cloud');
     });

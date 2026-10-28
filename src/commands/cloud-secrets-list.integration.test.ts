@@ -36,6 +36,7 @@ describe('cloudSecretsList', () => {
   const mockConfig = {
     project: { name: 'test-project' },
     cloud: { provider: 'gcp' },
+    services: [] as Array<{ name: string }>,
   };
 
   let consoleLogSpy: ReturnType<typeof rs.spyOn>;
@@ -243,6 +244,7 @@ describe('cloudSecretsList', () => {
         mockProjectRoot,
         'prod',
         'test-project',
+        [],
       );
       expect(mocks.logger.warn).toHaveBeenCalledWith('Azure Key Vault Naming:');
       expect(mocks.logger.success).toHaveBeenCalledWith('Total: 1 secret(s)');

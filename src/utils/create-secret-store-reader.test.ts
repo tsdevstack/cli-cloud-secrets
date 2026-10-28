@@ -50,6 +50,7 @@ import { getSecret as getSecretAWS } from './aws/get-secret';
 import { createAzureClient } from './azure/create-azure-client';
 import { secretExists as secretExistsAzure } from './azure/secret-exists';
 import { getSecret as getSecretAzure } from './azure/get-secret';
+const keyVaultExists = mocks.keyVaultExists;
 
 describe('createSecretStoreReader', () => {
   const base = {
@@ -155,6 +156,52 @@ describe('createSecretStoreReader', () => {
         { name: 'aws-client' },
         'shop-auth-service-ADMIN_EMAILS',
       );
+    });
+  });
+  describe('Azure service vaults', () => {
+    const reader = () =>
+      createSecretStoreReader({
+        provider: 'azure',
+        projectRoot: '/project',
+        projectName: 'shop',
+        env: 'dev',
+      });
+
+    it("should read a service scope from that service's vault", async () => {
+      rs.mocked(keyVaultExists).mockResolvedValue(true);
+      rs.mocked(getSecretAzure).mockResolvedValue('admin@shop.test');
+
+      await expect(reader().read('ADMIN_EMAILS', 'auth-service')).resolves.toBe(
+        'admin@shop.test',
+      );
+      expect(createAzureClient).toHaveBeenCalledWith(
+        { subscriptionId: 'sub' },
+        'shop',
+        'dev',
+        'auth-service',
+      );
+    });
+
+    it('should treat a missing service vault as empty', async () => {
+      rs.mocked(keyVaultExists).mockResolvedValue(false);
+
+      const store = reader();
+      await expect(store.read('ADMIN_EMAILS', 'auth-service')).resolves.toBe(
+        null,
+      );
+      await expect(store.exists('ADMIN_EMAILS', 'auth-service')).resolves.toBe(
+        false,
+      );
+      expect(getSecretAzure).not.toHaveBeenCalled();
+      // The vault is checked once per scope
+      expect(keyVaultExists).toHaveBeenCalledTimes(1);
+    });
+
+    it('should read the shared scope without a vault check', async () => {
+      rs.mocked(getSecretAzure).mockResolvedValue('shop.com');
+
+      await expect(reader().read('DOMAIN')).resolves.toBe('shop.com');
+      expect(keyVaultExists).not.toHaveBeenCalled();
     });
   });
 });

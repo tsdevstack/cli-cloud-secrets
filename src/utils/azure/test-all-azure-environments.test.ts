@@ -14,24 +14,17 @@ rs.mock('../../context', () => ({
   wrapCommand: rs.fn((fn: unknown) => fn),
 }));
 
-const mockVaultsList = rs.fn();
+const mockNextPage = rs.fn();
+const mockByPage = rs.fn(() => ({ next: mockNextPage }));
 
-rs.mock('./create-azure-credential', () => ({
-  createAzureCredential: rs.fn(() => ({})),
+rs.mock('./create-azure-client', () => ({
+  createAzureClient: rs.fn(() => ({
+    listPropertiesOfSecrets: () => ({ byPage: mockByPage }),
+  })),
 }));
 
-rs.mock('@azure/arm-keyvault', () => {
-  return {
-    KeyVaultManagementClient: class MockKeyVaultManagementClient {
-      vaults = {
-        list: mockVaultsList,
-      };
-      constructor() {}
-    },
-  };
-});
-
 import { testAllAzureEnvironments } from './test-all-azure-environments';
+import { createAzureClient } from './create-azure-client';
 
 describe('testAllAzureEnvironments', () => {
   beforeEach(() => {
@@ -55,12 +48,16 @@ describe('testAllAzureEnvironments', () => {
       staging: createMockCredentials('staging'),
     });
 
-    mockVaultsList.mockReturnValue({
-      next: rs.fn().mockResolvedValue({ done: true }),
-    });
+    mockNextPage.mockResolvedValue({ done: true });
 
     const results = await testAllAzureEnvironments('/project');
 
+    expect(createAzureClient).toHaveBeenCalledWith(
+      createMockCredentials('dev'),
+      'myproject',
+      'dev',
+    );
+    expect(mockByPage).toHaveBeenCalledWith({ maxPageSize: 1 });
     expect(results).toHaveLength(2);
     expect(results[0]).toEqual({
       env: 'dev',
@@ -79,9 +76,7 @@ describe('testAllAzureEnvironments', () => {
       dev: createMockCredentials('dev'),
     });
 
-    mockVaultsList.mockReturnValue({
-      next: rs.fn().mockRejectedValue(new Error('Invalid credentials')),
-    });
+    mockNextPage.mockRejectedValue(new Error('Invalid credentials'));
 
     const results = await testAllAzureEnvironments('/project');
 
@@ -93,22 +88,30 @@ describe('testAllAzureEnvironments', () => {
     });
   });
 
+  it('should name the Key Vault role when the vault refuses access', async () => {
+    mocks.loadCredentialsFile.mockReturnValue({
+      dev: createMockCredentials('dev'),
+    });
+    const forbidden = new Error('Caller is not authorized');
+    (forbidden as Error & { statusCode: number }).statusCode = 403;
+    mockNextPage.mockRejectedValue(forbidden);
+
+    const results = await testAllAzureEnvironments('/project');
+
+    expect(results[0].valid).toBe(false);
+    expect(results[0].error).toContain('Caller is not authorized');
+    expect(results[0].error).toContain('Key Vault Secrets Officer');
+  });
+
   it('should handle mixed valid and invalid environments', async () => {
     mocks.loadCredentialsFile.mockReturnValue({
       dev: createMockCredentials('dev'),
       staging: createMockCredentials('staging'),
     });
 
-    let callCount = 0;
-    mockVaultsList.mockImplementation(() => ({
-      next: rs.fn().mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) {
-          return Promise.resolve({ done: true });
-        }
-        return Promise.reject(new Error('Auth failed'));
-      }),
-    }));
+    mockNextPage
+      .mockResolvedValueOnce({ done: true })
+      .mockRejectedValueOnce(new Error('Auth failed'));
 
     const results = await testAllAzureEnvironments('/project');
 

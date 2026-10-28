@@ -2,10 +2,8 @@
  * Test all Azure environments from credentials file
  */
 
-import { createAzureCredential } from './create-azure-credential';
-import { KeyVaultManagementClient } from '@azure/arm-keyvault';
 import { getContext } from '../../context';
-import { buildKeyVaultName } from './build-key-vault-name';
+import { createAzureClient } from './create-azure-client';
 import type { AzureCredentials } from '../types';
 import type { EnvTestResult } from '../types';
 
@@ -13,7 +11,8 @@ export async function testAllAzureEnvironments(
   projectRoot: string,
 ): Promise<EnvTestResult[]> {
   try {
-    const { loadCredentialsFile, loadFrameworkConfig } = getContext();
+    const { loadCredentialsFile, loadFrameworkConfig, buildKeyVaultName } =
+      getContext();
     const allCredentials = loadCredentialsFile(projectRoot, 'azure');
     const config = loadFrameworkConfig();
     const projectName = config.project.name;
@@ -24,19 +23,14 @@ export async function testAllAzureEnvironments(
         const azureCredentials = credentials as AzureCredentials;
         const keyVaultName = buildKeyVaultName(projectName, env);
 
-        // Validate credentials by listing Key Vaults in the subscription
-        // This works regardless of whether our specific Key Vault exists
-        const credential = createAzureCredential(azureCredentials);
-
-        const kvManagementClient = new KeyVaultManagementClient(
-          credential,
-          azureCredentials.subscriptionId,
-        );
-
-        // Test credentials by listing vaults (lightweight operation)
-        // This validates: clientId, clientSecret, tenantId, and subscriptionId
-        const iterator = kvManagementClient.vaults.list();
-        await iterator.next();
+        // Read the first page of the shared vault's secrets, like the GCP
+        // and AWS tests. Listing vaults would pass without a Key Vault data
+        // role, and push then fails on every secret.
+        const client = createAzureClient(azureCredentials, projectName, env);
+        await client
+          .listPropertiesOfSecrets()
+          .byPage({ maxPageSize: 1 })
+          .next();
 
         results.push({
           env,
@@ -44,10 +38,16 @@ export async function testAllAzureEnvironments(
           projectId: keyVaultName,
         });
       } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown error';
+        const forbidden =
+          (error as { statusCode?: number } | null)?.statusCode === 403;
         results.push({
           env,
           valid: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: forbidden
+            ? `${message}\n  Hint: give the service principal Key Vault Secrets Officer on the resource group (Azure account setup, Step 5). Key Vault Secrets User can only read. A new role assignment can take up to 10 minutes to apply.`
+            : message,
         });
       }
     }

@@ -16,6 +16,11 @@
  * - SECRETS_PROVIDER must be set in .env
  * - Credentials file must exist
  *
+ * Each secret is compared in the scope it belongs to (getSecretScope): shared
+ * secrets against the top-level block of .secrets.local.json, service-scoped
+ * ones (the auth secrets) against that service's section, shown as
+ * `KEY (service)`.
+ *
  * The command will show:
  * - ✓ Secrets that match (exist in both)
  * - → Secrets only in local (need to push)
@@ -32,6 +37,7 @@ import { listSecretsWithKeys as listGCPSecretsWithKeys } from '../utils/gcp/list
 import { listSecretsWithKeys as listAWSSecretsWithKeys } from '../utils/aws/list-secrets-with-keys';
 import { listSecretsWithKeys as listAzureSecretsWithKeys } from '../utils/azure/list-secrets-with-keys';
 import inquirer from 'inquirer';
+import { isLocalOnlySecret } from '../utils/is-local-only-secret';
 
 /**
  * Main cloud-secrets:diff command
@@ -44,6 +50,8 @@ export async function cloudSecretsDiff(env?: string): Promise<void> {
     getAvailableEnvironments,
     isFile,
     readJsonFile,
+    getSecretScope,
+    SHARED_SECRET_SCOPE,
   } = getContext();
 
   logger.info('Cloud Secrets: Compare local vs cloud secrets');
@@ -135,27 +143,61 @@ export async function cloudSecretsDiff(env?: string): Promise<void> {
   const secretsFile = readJsonFile<SecretsFile>(secretsPath);
   const sharedSecrets = secretsFile?.secrets || {};
 
+  // A shared secret by its key, a service-scoped one as `KEY (service)`
+  const label = (key: string, scope: string): string =>
+    scope === SHARED_SECRET_SCOPE ? key : `${key} (${scope})`;
+
   // Filter out metadata fields and local-only secrets
-  const localSecretKeys = Object.keys(sharedSecrets).filter((key) => {
+  const localSharedKeys = Object.keys(sharedSecrets).filter((key) => {
     // Skip metadata fields
     if (key.startsWith('$')) return false;
 
     // Skip local-only secrets (never pushed to cloud)
-    if (
-      key === 'NODE_ENV' ||
-      key === 'SECRETS_PROVIDER' ||
-      key === 'KONG_SERVICE_HOST'
-    ) {
+    if (isLocalOnlySecret(key)) {
       return false;
     }
 
     return true;
   });
 
+  // Service-scoped secrets: the keys of a service's section that belong to
+  // that service's scope (not PORT, API_KEY, DATABASE_URL, which are local)
+  const localScopedKeys: string[] = [];
+  for (const [section, entries] of Object.entries(secretsFile ?? {})) {
+    if (
+      section === 'secrets' ||
+      section.startsWith('$') ||
+      !entries ||
+      typeof entries !== 'object' ||
+      Array.isArray(entries)
+    ) {
+      continue;
+    }
+    for (const [key, value] of Object.entries(entries)) {
+      if (
+        typeof value === 'string' &&
+        getSecretScope(key, config) === section
+      ) {
+        localScopedKeys.push(label(key, section));
+      }
+    }
+  }
+
+  const localSecretKeys = [...localSharedKeys, ...localScopedKeys];
+
   logger.loading(`Local secrets: ${localSecretKeys.length}`);
 
-  // Step 5: List cloud secrets (only shared secrets for diff comparison)
+  // Step 5: List cloud secrets: shared ones, and service-scoped ones in the
+  // scope they belong to (not DATABASE_URL and other deploy-managed values)
   let cloudSecretKeys: string[] = [];
+  const comparable = (secrets: Array<{ key: string; scope: string }>) =>
+    secrets
+      .filter(
+        (s) =>
+          s.scope === SHARED_SECRET_SCOPE ||
+          getSecretScope(s.key, config) === s.scope,
+      )
+      .map((s) => label(s.key, s.scope));
 
   if (provider === 'gcp') {
     const credentials = loadGCPCredentials(projectRoot, selectedEnv);
@@ -165,30 +207,23 @@ export async function cloudSecretsDiff(env?: string): Promise<void> {
       credentials.project_id,
       projectName,
     );
-    // For diff, only compare shared secrets
-    cloudSecretKeys = extractedSecrets
-      .filter((s) => s.scope === 'shared')
-      .map((s) => s.key);
+    cloudSecretKeys = comparable(extractedSecrets);
   } else if (provider === 'aws') {
     const extractedSecrets = await listAWSSecretsWithKeys(
       projectRoot,
       selectedEnv,
       projectName,
     );
-    // For diff, only compare shared secrets
-    cloudSecretKeys = extractedSecrets
-      .filter((s) => s.scope === 'shared')
-      .map((s) => s.key);
+    cloudSecretKeys = comparable(extractedSecrets);
   } else if (provider === 'azure') {
     const extractedSecrets = await listAzureSecretsWithKeys(
       projectRoot,
       selectedEnv,
       projectName,
+      // Each service's scope is in its own vault
+      config.services.map((s) => s.name),
     );
-    // For diff, only compare shared secrets
-    cloudSecretKeys = extractedSecrets
-      .filter((s) => s.scope === 'shared')
-      .map((s) => s.key);
+    cloudSecretKeys = comparable(extractedSecrets);
   }
 
   logger.loading(`Cloud secrets: ${cloudSecretKeys.length}`);

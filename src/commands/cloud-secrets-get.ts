@@ -49,6 +49,9 @@ export async function cloudSecretsGet(
     loadFrameworkConfig,
     getAvailableEnvironments,
     buildSecretName,
+    getSecretScope,
+    SHARED_SECRET_SCOPE,
+    keyVaultExists,
   } = getContext();
 
   // Step 1: Validate key parameter
@@ -116,7 +119,8 @@ export async function cloudSecretsGet(
 
   // Step 6: Get secret from cloud provider
   let secretValue: string | null = null;
-  const scope = options.service || 'shared';
+  // Without --service, the scope the secret belongs to (auth secrets: auth-service)
+  const scope = options.service || getSecretScope(key, config);
   const secretName = buildSecretName(projectName, scope, key);
 
   if (provider === 'gcp') {
@@ -130,9 +134,20 @@ export async function cloudSecretsGet(
     secretValue = await getAWSSecret(client, secretName);
   } else if (provider === 'azure') {
     const credentials = loadAzureCredentials(projectRoot, selectedEnv);
-    const client = createAzureClient(credentials, projectName, selectedEnv);
-    const azureSecretName = transformKeyForAzure(secretName);
-    secretValue = await getAzureSecret(client, azureSecretName);
+    // A service scope lives in its own vault, which may not exist yet
+    const vaultExists =
+      scope === SHARED_SECRET_SCOPE ||
+      (await keyVaultExists(credentials, projectName, selectedEnv, scope));
+    if (vaultExists) {
+      const client = createAzureClient(
+        credentials,
+        projectName,
+        selectedEnv,
+        scope,
+      );
+      const azureSecretName = transformKeyForAzure(secretName);
+      secretValue = await getAzureSecret(client, azureSecretName);
+    }
   }
 
   // Step 7: Output result

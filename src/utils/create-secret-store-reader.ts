@@ -20,6 +20,7 @@ import { createAzureClient } from './azure/create-azure-client';
 import { secretExists as secretExistsAzure } from './azure/secret-exists';
 import { getSecret as getSecretAzure } from './azure/get-secret';
 import { transformKeyForAzure } from './azure/set-secret';
+import type { SecretClient } from '@azure/keyvault-secrets';
 import type { CloudProvider, SecretStoreReader } from './types';
 
 /**
@@ -37,10 +38,10 @@ export function createSecretStoreReader(options: {
   projectName: string;
   env: string;
 }): SecretStoreReader {
-  const { buildSecretName } = getContext();
+  const { buildSecretName, keyVaultExists, SHARED_SECRET_SCOPE } = getContext();
   const { provider, projectRoot, projectName, env } = options;
 
-  const nameFor = (key: string, scope = 'shared'): string =>
+  const nameFor = (key: string, scope: string = SHARED_SECRET_SCOPE): string =>
     buildSecretName(projectName, scope, key);
 
   if (provider === 'gcp') {
@@ -66,12 +67,40 @@ export function createSecretStoreReader(options: {
     };
   }
 
+  // Azure keeps each service scope in its own vault. A service's vault may
+  // not exist yet (it is created on the first write): it holds nothing then.
   const credentials = loadAzureCredentials(projectRoot, env);
-  const client = createAzureClient(credentials, projectName, env);
+  const clients = new Map<string, Promise<SecretClient | null>>();
+  const clientFor = (
+    scope: string = SHARED_SECRET_SCOPE,
+  ): Promise<SecretClient | null> => {
+    let client = clients.get(scope);
+    if (!client) {
+      client =
+        scope === SHARED_SECRET_SCOPE
+          ? Promise.resolve(createAzureClient(credentials, projectName, env))
+          : keyVaultExists(credentials, projectName, env, scope).then(
+              (exists) =>
+                exists
+                  ? createAzureClient(credentials, projectName, env, scope)
+                  : null,
+            );
+      clients.set(scope, client);
+    }
+    return client;
+  };
   return {
-    exists: (key, scope) =>
-      secretExistsAzure(client, transformKeyForAzure(nameFor(key, scope))),
-    read: (key, scope) =>
-      getSecretAzure(client, transformKeyForAzure(nameFor(key, scope))),
+    exists: async (key, scope) => {
+      const client = await clientFor(scope);
+      return client
+        ? secretExistsAzure(client, transformKeyForAzure(nameFor(key, scope)))
+        : false;
+    },
+    read: async (key, scope) => {
+      const client = await clientFor(scope);
+      return client
+        ? getSecretAzure(client, transformKeyForAzure(nameFor(key, scope)))
+        : null;
+    },
   };
 }

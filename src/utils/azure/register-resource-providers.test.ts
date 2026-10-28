@@ -14,10 +14,6 @@ rs.mock('../../context', () => ({
   wrapCommand: rs.fn((fn: unknown) => fn),
 }));
 
-rs.mock('./create-azure-credential', () => ({
-  createAzureCredential: rs.fn(() => ({})),
-}));
-
 rs.mock('@azure/arm-resources', () => {
   return {
     ResourceManagementClient: class MockResourceManagementClient {

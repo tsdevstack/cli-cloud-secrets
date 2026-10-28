@@ -176,6 +176,8 @@ export async function cloudSecretsList(options: {
       projectRoot,
       selectedEnv,
       projectName,
+      // Each service's scope is in its own vault
+      config.services.map((s) => s.name),
     );
 
     for (const { key, scope } of extractedSecrets) {

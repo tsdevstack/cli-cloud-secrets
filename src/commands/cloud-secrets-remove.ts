@@ -52,6 +52,7 @@ export async function cloudSecretsRemove(
     loadFrameworkConfig,
     getAvailableEnvironments,
     buildSecretName,
+    getSecretScope,
     isFile,
     readJsonFile,
     writeJsonFile,
@@ -129,7 +130,8 @@ export async function cloudSecretsRemove(
     selectedEnv = options.env;
   }
 
-  const scope = options.service || 'shared';
+  // Without --service, the scope the secret belongs to (auth secrets: auth-service)
+  const scope = options.service || getSecretScope(key, config);
 
   logger.loading(`Provider: ${provider.toUpperCase()}`);
   logger.loading(`Project: ${projectName}`);
@@ -212,6 +214,7 @@ export async function cloudSecretsRemove(
       selectedEnv,
       projectName,
       secretName,
+      scope,
     );
   }
 
