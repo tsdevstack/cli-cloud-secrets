@@ -281,7 +281,7 @@ describe('cloudSecretsPush', () => {
       );
     });
 
-    it('should push LOG_LEVEL as info, not the local debug', async () => {
+    it('should not push LOG_LEVEL (deployed services get it from infrastructure.json)', async () => {
       mocks.generateFrameworkSecretsFile.mockReturnValue({
         secrets: { LOG_LEVEL: 'debug' },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
@@ -289,10 +289,10 @@ describe('cloudSecretsPush', () => {
 
       await cloudSecretsPush({ env: 'dev' });
 
-      expect(cloudSecretsSet).toHaveBeenCalledWith(
+      expect(cloudSecretsSet).not.toHaveBeenCalledWith(
         'LOG_LEVEL',
         undefined,
-        expect.objectContaining({ value: 'info', env: 'dev' }),
+        expect.any(Object),
       );
     });
 

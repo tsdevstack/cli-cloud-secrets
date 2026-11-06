@@ -7,6 +7,9 @@ export const LOCAL_ONLY_SECRET_KEYS = [
   'NODE_ENV',
   'SECRETS_PROVIDER',
   'KONG_SERVICE_HOST',
+  // The local level (debug). Deployed services get theirs from
+  // infrastructure.json (logLevel), as an environment variable.
+  'LOG_LEVEL',
   // Local object storage (RustFS) connection; the cloud uses the provider's
   // own storage with the service's identity
   'STORAGE_ENDPOINT',

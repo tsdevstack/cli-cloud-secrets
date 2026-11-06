@@ -238,13 +238,6 @@ export async function cloudSecretsPush(options: {
   // Override KONG_SSL_VERIFY for cloud (secure by default - verify SSL certificates)
   frameworkSecretsToUpload.KONG_SSL_VERIFY = 'yes';
 
-  // The generated value is debug, for local development. Deployed services
-  // do not read LOG_LEVEL from the secret store (they run at info), so the
-  // store holds the cloud level instead of claiming debug.
-  if ('LOG_LEVEL' in frameworkSecretsToUpload) {
-    frameworkSecretsToUpload.LOG_LEVEL = 'info';
-  }
-
   // Add TTL defaults (sensible values, user can override with cloud-secrets:set)
   frameworkSecretsToUpload.ACCESS_TOKEN_TTL = '900';
   frameworkSecretsToUpload.REFRESH_TOKEN_TTL = '604800';
