@@ -50,6 +50,9 @@ import {
 
 /**
  * Main cloud-secrets:set command
+ *
+ * @returns true when it wrote the secret; false when it kept an existing one
+ * (no --overwrite) or the user cancelled
  */
 export async function cloudSecretsSet(
   key: string | undefined,
@@ -62,7 +65,7 @@ export async function cloudSecretsSet(
     overwrite?: boolean;
     internal?: boolean;
   },
-): Promise<void> {
+): Promise<boolean> {
   const {
     logger,
     findProjectRoot,
@@ -88,8 +91,11 @@ export async function cloudSecretsSet(
     logger.info(`Error: ${detail}`);
     process.exit(1);
   };
-  logger.info('Cloud Secrets: Set or update a secret');
-  logger.newline();
+  // Push and migrate print one line per secret themselves
+  if (!internal) {
+    logger.info('Cloud Secrets: Set or update a secret');
+    logger.newline();
+  }
 
   // Step 1: Validate key parameter
   if (!key) {
@@ -163,12 +169,14 @@ export async function cloudSecretsSet(
   // Without --service, the scope the secret belongs to (auth secrets: auth-service)
   const scope = options.service || getSecretScope(key, config);
 
-  logger.loading(`Provider: ${provider.toUpperCase()}`);
-  logger.loading(`Project: ${projectName}`);
-  logger.loading(`Environment: ${selectedEnv}`);
-  logger.loading(`Scope: ${scope}`);
-  logger.loading(`Secret key: ${key}`);
-  logger.newline();
+  if (!internal) {
+    logger.loading(`Provider: ${provider.toUpperCase()}`);
+    logger.loading(`Project: ${projectName}`);
+    logger.loading(`Environment: ${selectedEnv}`);
+    logger.loading(`Scope: ${scope}`);
+    logger.loading(`Secret key: ${key}`);
+    logger.newline();
+  }
 
   // Azure-specific warning about key name transformation
   if (provider === 'azure' && !internal) {
@@ -240,7 +248,7 @@ export async function cloudSecretsSet(
         failWrite(`Failed to create the Key Vault for ${scope}`, vault.error);
       }
     }
-    azureClient = createAzureClient(
+    azureClient = await createAzureClient(
       azureCredentials,
       projectName,
       selectedEnv,
@@ -269,7 +277,7 @@ export async function cloudSecretsSet(
       logger.warn(
         `Secret ${key} already exists in ${selectedEnv}. Skipped (no --overwrite flag)`,
       );
-      return;
+      return false;
     } else {
       // Interactive mode: prompt
       const { confirmOverwrite } = await inquirer.prompt([
@@ -283,7 +291,7 @@ export async function cloudSecretsSet(
 
       if (!confirmOverwrite) {
         logger.info('Cancelled');
-        return;
+        return false;
       }
     }
   }
@@ -336,4 +344,5 @@ export async function cloudSecretsSet(
     logger.complete('Secret set successfully!');
     logger.newline();
   }
+  return true;
 }

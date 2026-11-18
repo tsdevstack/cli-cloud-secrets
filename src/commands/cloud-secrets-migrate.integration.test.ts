@@ -74,7 +74,7 @@ describe('cloudSecretsMigrate', () => {
     mocks.getAvailableEnvironments.mockReturnValue(['dev', 'prod']);
     mocks.resolveEnvironment.mockResolvedValue('dev');
     rs.mocked(createOldSecretStore).mockReturnValue(oldStore);
-    rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+    rs.mocked(cloudSecretsSet).mockResolvedValue(true);
   });
 
   describe('Standard use cases', () => {

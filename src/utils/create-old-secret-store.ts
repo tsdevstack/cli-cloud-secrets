@@ -59,9 +59,9 @@ export function createOldSecretStore(options: {
       env,
     );
     return {
-      read: (key, oldScope) =>
+      read: async (key, oldScope) =>
         getSecretAzure(
-          client,
+          await client,
           transformSecretNameForAzure(nameFor(key, oldScope)),
         ),
       remove: async (key, oldScope) => {

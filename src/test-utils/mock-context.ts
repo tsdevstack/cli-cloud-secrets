@@ -144,6 +144,12 @@ export function createMockContext() {
     buildGCPClientOptions,
     getSecretScope,
     buildKeyVaultName,
+    resolveKeyVaultName: async (
+      _credentials: unknown,
+      projectName: string,
+      env: string,
+      scope?: string,
+    ): Promise<string> => buildKeyVaultName(projectName, env, scope),
     keyVaultExists,
     ensureKeyVaultExists,
     createAzureCredential,

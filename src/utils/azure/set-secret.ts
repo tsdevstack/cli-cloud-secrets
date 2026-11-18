@@ -1,4 +1,5 @@
 import type { SecretClient } from '@azure/keyvault-secrets';
+import { getContext } from '../../context';
 import type { CloudSecretResult } from '../types';
 import { secretExists } from './secret-exists';
 
@@ -13,13 +14,15 @@ export function transformKeyForAzure(key: string): string {
 
 /**
  * Set or update a secret in Azure Key Vault with tags
- * Azure supports up to 15 tags per secret
+ * Azure supports up to 15 tags per secret. A deleted secret that still
+ * holds the name (soft delete, e.g. after remove-service) is recovered and
+ * gets the new value.
  */
 export async function setSecret(
   client: SecretClient,
   secretName: string,
   secretValue: string,
-  tags: Record<string, string>
+  tags: Record<string, string>,
 ): Promise<CloudSecretResult> {
   try {
     // Check if secret already exists
@@ -36,9 +39,8 @@ export async function setSecret(
     }
 
     // Set the secret with tags
-    await client.setSecret(secretName, secretValue, {
-      tags,
-    });
+    const { setKeyVaultSecret } = getContext();
+    await setKeyVaultSecret(client, secretName, secretValue, { tags });
 
     return {
       success: true,

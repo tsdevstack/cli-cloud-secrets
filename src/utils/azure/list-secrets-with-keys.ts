@@ -38,7 +38,7 @@ export async function listSecretsWithKeys(
     }
 
     for (const scope of scopes) {
-      const client = createAzureClient(
+      const client = await createAzureClient(
         credentials,
         projectName,
         selectedEnv,

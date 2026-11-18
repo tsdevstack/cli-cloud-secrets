@@ -16,15 +16,21 @@ import type { AzureCredentials } from '../types';
  * @param scope - 'shared' (default) or a service name
  * @returns SecretClient for the scope's vault
  */
-export function createAzureClient(
+export async function createAzureClient(
   credentials: AzureCredentials,
   projectName: string,
   env: string,
   scope?: string,
-): SecretClient {
-  const { buildKeyVaultName, createAzureCredential } = getContext();
+): Promise<SecretClient> {
+  const { resolveKeyVaultName, createAzureCredential } = getContext();
   const credential = createAzureCredential(credentials);
-  const keyVaultName = buildKeyVaultName(projectName, env, scope);
+  // The vault's name in this environment (old or unique naming scheme)
+  const keyVaultName = await resolveKeyVaultName(
+    credentials,
+    projectName,
+    env,
+    scope,
+  );
   const vaultUrl = `https://${keyVaultName}.vault.azure.net`;
 
   return new SecretClient(vaultUrl, credential);

@@ -39,7 +39,7 @@ export async function removeSecretByName(
     ) {
       return { success: false, error: `Secret ${secretName} not found` };
     }
-    const client = createAzureClient(
+    const client = await createAzureClient(
       credentials,
       projectName,
       selectedEnv,

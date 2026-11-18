@@ -16,8 +16,13 @@ rs.mock('@azure/keyvault-secrets', () => {
 
 rs.mock('../../context', () => ({
   getContext: () => ({
-    buildKeyVaultName: (project: string, env: string, scope = 'shared') =>
-      `${project}-${env}-${scope === 'shared' ? 'kv' : scope}`,
+    // The legacy names (the scheme check is cli-core's own test)
+    resolveKeyVaultName: async (
+      _credentials: unknown,
+      project: string,
+      env: string,
+      scope = 'shared',
+    ) => `${project}-${env}-${scope === 'shared' ? 'kv' : scope}`,
     createAzureCredential: (credentials: {
       tenantId: string;
       clientId: string;
@@ -46,8 +51,8 @@ describe('createAzureClient', () => {
     location: 'eastus',
   };
 
-  it('should create SecretClient with correct vault URL', () => {
-    const client = createAzureClient(mockCredentials, 'myproject', 'dev');
+  it('should create SecretClient with correct vault URL', async () => {
+    const client = await createAzureClient(mockCredentials, 'myproject', 'dev');
 
     expect(client).toBeDefined();
     // Key vault name is derived from project name and env
@@ -56,8 +61,12 @@ describe('createAzureClient', () => {
     );
   });
 
-  it('should create credentials with tenant, client, and secret', () => {
-    const client = createAzureClient(mockCredentials, 'testapp', 'staging');
+  it('should create credentials with tenant, client, and secret', async () => {
+    const client = await createAzureClient(
+      mockCredentials,
+      'testapp',
+      'staging',
+    );
 
     expect(client).toBeDefined();
     const cred = (
@@ -74,9 +83,9 @@ describe('createAzureClient', () => {
     expect(cred.clientSecret).toBe('test-client-secret');
   });
 
-  it('should handle different environments', () => {
-    const devClient = createAzureClient(mockCredentials, 'app', 'dev');
-    const prodClient = createAzureClient(mockCredentials, 'app', 'prod');
+  it('should handle different environments', async () => {
+    const devClient = await createAzureClient(mockCredentials, 'app', 'dev');
+    const prodClient = await createAzureClient(mockCredentials, 'app', 'prod');
 
     expect((devClient as unknown as { vaultUrl: string }).vaultUrl).toBe(
       'https://app-dev-kv.vault.azure.net',
@@ -86,8 +95,8 @@ describe('createAzureClient', () => {
     );
   });
 
-  it("should point at a service's own vault for its scope", () => {
-    const client = createAzureClient(
+  it("should point at a service's own vault for its scope", async () => {
+    const client = await createAzureClient(
       mockCredentials,
       'myproject',
       'dev',
@@ -98,8 +107,12 @@ describe('createAzureClient', () => {
     );
   });
 
-  it('should handle project names with hyphens', () => {
-    const client = createAzureClient(mockCredentials, 'my-project', 'dev');
+  it('should handle project names with hyphens', async () => {
+    const client = await createAzureClient(
+      mockCredentials,
+      'my-project',
+      'dev',
+    );
 
     expect((client as unknown as { vaultUrl: string }).vaultUrl).toContain(
       'my-project-dev',

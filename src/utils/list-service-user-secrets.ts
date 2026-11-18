@@ -17,8 +17,9 @@ export interface ServiceUserSecret {
 /**
  * The values in backend services' sections of .secrets.user.json: each
  * belongs to that service's scope, where only that service reads it. Left
- * out: the `secrets` array, metadata (`$...`), DATABASE_URL (written by
- * infra:deploy) and local-only values.
+ * out: the `secrets` array, metadata (`$...`), DATABASE_URL and
+ * MIGRATION_DATABASE_URL (written in each cloud by infra:deploy)
+ * and local-only values.
  *
  * @param userSecretsFile - Parsed .secrets.user.json
  * @param config - Framework config (which sections are backend services)
@@ -50,6 +51,7 @@ export function listServiceUserSecrets(
         key === 'secrets' ||
         key.startsWith('$') ||
         key === 'DATABASE_URL' ||
+        key === 'MIGRATION_DATABASE_URL' ||
         isLocalOnlySecret(key)
       ) {
         continue;

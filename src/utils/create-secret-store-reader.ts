@@ -78,7 +78,7 @@ export function createSecretStoreReader(options: {
     if (!client) {
       client =
         scope === SHARED_SECRET_SCOPE
-          ? Promise.resolve(createAzureClient(credentials, projectName, env))
+          ? createAzureClient(credentials, projectName, env)
           : keyVaultExists(credentials, projectName, env, scope).then(
               (exists) =>
                 exists

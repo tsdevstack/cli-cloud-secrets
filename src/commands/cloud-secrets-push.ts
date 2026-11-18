@@ -313,21 +313,21 @@ export async function cloudSecretsPush(options: {
       })
     : null;
 
+  // true when the secret was written, false when it was already set
   const pushFrameworkSecret = async (
     key: string,
     progress: string,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const scope = getSecretScope(key, config);
 
     if (!scopedStore || scope === SHARED_SECRET_SCOPE) {
       logger.info(`${progress} ${key}`);
-      await cloudSecretsSet(key, undefined, {
+      return cloudSecretsSet(key, undefined, {
         value: frameworkSecretsToUpload[key],
         env: selectedEnv,
         overwrite: false,
         internal: true,
       });
-      return;
     }
 
     // An environment from before the scope existed keeps its shared value
@@ -339,14 +339,14 @@ export async function cloudSecretsPush(options: {
     );
     if (plan.action === 'skip') {
       logger.info(`${progress} ${key} (${scope}, already set)`);
-      return;
+      return false;
     }
     logger.info(
       plan.action === 'copy'
         ? `${progress} ${key} (${scope}, value kept from shared)`
         : `${progress} ${key} (${scope})`,
     );
-    await cloudSecretsSet(key, undefined, {
+    return cloudSecretsSet(key, undefined, {
       value: plan.value,
       env: selectedEnv,
       service: scope,
@@ -357,7 +357,7 @@ export async function cloudSecretsPush(options: {
 
   const frameworkPromises = frameworkKeys.map((key, index) =>
     pushFrameworkSecret(key, `[${index + 1}/${frameworkKeys.length}]`).then(
-      () => null,
+      (written) => ({ written }),
       (error: unknown) => ({
         key,
         message: error instanceof Error ? error.message : String(error),
@@ -367,13 +367,20 @@ export async function cloudSecretsPush(options: {
 
   const frameworkResults = await Promise.all(frameworkPromises);
   const frameworkFailures = frameworkResults.filter(
-    (result): result is { key: string; message: string } => result !== null,
+    (result): result is { key: string; message: string } => 'message' in result,
   );
-  const frameworkPushed = frameworkKeys.length - frameworkFailures.length;
+  const frameworkPushed = frameworkResults.filter(
+    (result) => 'written' in result && result.written,
+  ).length;
+  const frameworkAlreadySet =
+    frameworkKeys.length - frameworkPushed - frameworkFailures.length;
 
   logger.newline();
   logger.summary('Framework secrets push complete:');
   logger.success(`   Pushed: ${frameworkPushed}`);
+  if (frameworkAlreadySet > 0) {
+    logger.info(`   Already set: ${frameworkAlreadySet}`);
+  }
   if (frameworkFailures.length > 0) {
     logger.error(`   Failed: ${frameworkFailures.length}`);
     for (const { key, message } of frameworkFailures) {

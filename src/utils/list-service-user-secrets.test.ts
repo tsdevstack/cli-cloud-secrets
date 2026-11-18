@@ -29,12 +29,13 @@ describe('listServiceUserSecrets', () => {
   });
 
   describe('Edge cases', () => {
-    it('should leave out arrays, metadata, DATABASE_URL and local-only values', () => {
+    it('should leave out arrays, metadata, both database URLs and local-only values', () => {
       const file = {
         'offers-service': {
           secrets: ['SENTRY_DSN'],
           $comment: 'note',
           DATABASE_URL: 'postgresql://local',
+          MIGRATION_DATABASE_URL: 'postgresql://local-owner',
           STORAGE_ENDPOINT: 'http://localhost:9000',
           STRIPE_API_KEY: '',
         },

@@ -11,7 +11,7 @@ export async function testAllAzureEnvironments(
   projectRoot: string,
 ): Promise<EnvTestResult[]> {
   try {
-    const { loadCredentialsFile, loadFrameworkConfig, buildKeyVaultName } =
+    const { loadCredentialsFile, loadFrameworkConfig, resolveKeyVaultName } =
       getContext();
     const allCredentials = loadCredentialsFile(projectRoot, 'azure');
     const config = loadFrameworkConfig();
@@ -21,12 +21,20 @@ export async function testAllAzureEnvironments(
     for (const [env, credentials] of Object.entries(allCredentials)) {
       try {
         const azureCredentials = credentials as AzureCredentials;
-        const keyVaultName = buildKeyVaultName(projectName, env);
+        const keyVaultName = await resolveKeyVaultName(
+          azureCredentials,
+          projectName,
+          env,
+        );
 
         // Read the first page of the shared vault's secrets, like the GCP
         // and AWS tests. Listing vaults would pass without a Key Vault data
         // role, and push then fails on every secret.
-        const client = createAzureClient(azureCredentials, projectName, env);
+        const client = await createAzureClient(
+          azureCredentials,
+          projectName,
+          env,
+        );
         await client
           .listPropertiesOfSecrets()
           .byPage({ maxPageSize: 1 })

@@ -139,7 +139,7 @@ export async function cloudSecretsGet(
       scope === SHARED_SECRET_SCOPE ||
       (await keyVaultExists(credentials, projectName, selectedEnv, scope));
     if (vaultExists) {
-      const client = createAzureClient(
+      const client = await createAzureClient(
         credentials,
         projectName,
         selectedEnv,

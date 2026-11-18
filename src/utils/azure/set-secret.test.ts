@@ -6,6 +6,13 @@ import { setSecret, transformKeyForAzure } from './set-secret';
 rs.mock('./secret-exists', { mock: true });
 import { secretExists } from './secret-exists';
 
+// cli-core's write (its own tests cover the recovery): here it writes
+// through the client, or reports a recovery
+const mockSetKeyVaultSecret = rs.fn();
+rs.mock('../../context', () => ({
+  getContext: () => ({ setKeyVaultSecret: mockSetKeyVaultSecret }),
+}));
+
 describe('transformKeyForAzure', () => {
   it('should replace underscores with hyphens', () => {
     expect(transformKeyForAzure('DATABASE_URL')).toBe('DATABASE-URL');
@@ -29,6 +36,17 @@ describe('setSecret', () => {
     mockClient = {
       setSecret: mockSetSecret,
     } as unknown as SecretClient;
+    mockSetKeyVaultSecret.mockImplementation(
+      async (
+        client: SecretClient,
+        name: string,
+        value: string,
+        options: unknown,
+      ) => {
+        await client.setSecret(name, value, options as never);
+        return { recovered: false };
+      },
+    );
   });
 
   describe('Standard use cases', () => {
@@ -87,6 +105,25 @@ describe('setSecret', () => {
       expect(mockSetSecret).toHaveBeenCalledWith('test-secret', 'value', {
         tags: {},
       });
+    });
+  });
+
+  describe('A deleted secret holding the name', () => {
+    it("should write through cli-core's write, which recovers it", async () => {
+      rs.mocked(secretExists).mockResolvedValueOnce(false);
+      mockSetKeyVaultSecret.mockResolvedValueOnce({ recovered: true });
+
+      const result = await setSecret(mockClient, 'test-secret', 'value', {
+        scope: 'shared',
+      });
+
+      expect(mockSetKeyVaultSecret).toHaveBeenCalledWith(
+        mockClient,
+        'test-secret',
+        'value',
+        { tags: { scope: 'shared' } },
+      );
+      expect(result).toEqual({ success: true, isNew: true });
     });
   });
 

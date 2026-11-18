@@ -127,7 +127,7 @@ describe('cloudSecretsPush', () => {
         secrets: { KONG_ADMIN_KEY: 'test-key' },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
       mocks.loadUserSecrets.mockReturnValue(null);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({});
 
@@ -147,7 +147,7 @@ describe('cloudSecretsPush', () => {
         secrets: { KONG_ADMIN_KEY: 'test-key' },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
       mocks.loadUserSecrets.mockReturnValue(null);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'staging' });
 
@@ -173,7 +173,7 @@ describe('cloudSecretsPush', () => {
           AUTH_SECRET: 'fresh-secret-456',
         },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'dev' });
 
@@ -182,6 +182,27 @@ describe('cloudSecretsPush', () => {
         null,
       );
       // Service URLs are NOT generated here - they're synced after deployment via infra:service-deploy
+    });
+
+    it('should count secrets that were already set apart from pushed ones', async () => {
+      mocks.generateFrameworkSecretsFile.mockReturnValue({
+        secrets: {
+          KONG_ADMIN_KEY: 'fresh-key-123',
+          AUTH_SECRET: 'fresh-secret-456',
+        },
+      } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
+      // KONG_ADMIN_KEY already exists in the cloud (kept); the rest are written
+      rs.mocked(cloudSecretsSet).mockImplementation(
+        async (key) => key !== 'KONG_ADMIN_KEY',
+      );
+
+      await cloudSecretsPush({ env: 'dev' });
+
+      const frameworkCalls = rs.mocked(cloudSecretsSet).mock.calls.length;
+      expect(mocks.logger.success).toHaveBeenCalledWith(
+        `   Pushed: ${frameworkCalls - 1}`,
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith('   Already set: 1');
     });
 
     it('should not push secrets only local development uses', async () => {
@@ -196,7 +217,7 @@ describe('cloudSecretsPush', () => {
           DB_AUTH_PASSWORD: 'db-password',
         },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'dev' });
 
@@ -224,7 +245,7 @@ describe('cloudSecretsPush', () => {
           VALID_SECRET: 'valid-value',
         },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'dev' });
 
@@ -285,7 +306,7 @@ describe('cloudSecretsPush', () => {
       mocks.generateFrameworkSecretsFile.mockReturnValue({
         secrets: { LOG_LEVEL: 'debug' },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'dev' });
 
@@ -304,7 +325,7 @@ describe('cloudSecretsPush', () => {
           SECRET_3: 'value-3',
         },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'dev' });
 
@@ -322,11 +343,11 @@ describe('cloudSecretsPush', () => {
       // 7 calls total: SECRET_1, SECRET_2, KONG_SSL_VERIFY, 3 TTLs, EMAIL_PROVIDER
       // Second call fails, rest succeed
       rs.mocked(cloudSecretsSet)
-        .mockResolvedValueOnce(undefined) // SECRET_1
+        .mockResolvedValueOnce(true) // SECRET_1
         .mockRejectedValueOnce(
           new Error('Permission denied\nAction: setSecret'),
         ) // SECRET_2
-        .mockResolvedValue(undefined); // all remaining
+        .mockResolvedValue(true); // all remaining
 
       await expect(cloudSecretsPush({ env: 'dev' })).rejects.toThrow(
         'process.exit',
@@ -373,7 +394,7 @@ describe('cloudSecretsPush', () => {
       rs.mocked(inquirer.prompt)
         .mockResolvedValueOnce({ value: 'prod-resend-key' })
         .mockResolvedValueOnce({ value: 'noreply@prod.com' });
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -403,7 +424,7 @@ describe('cloudSecretsPush', () => {
         'api-service': { STRIPE_API_KEY: 'sk_test_local', secrets: [] },
       } as unknown as ReturnType<typeof mocks.loadUserSecrets>);
       rs.mocked(inquirer.prompt).mockResolvedValueOnce({ value: 'sk_live' });
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -434,7 +455,7 @@ describe('cloudSecretsPush', () => {
         secrets: {},
         frontend: { ANALYTICS_ID: 'GA-1' },
       } as unknown as ReturnType<typeof mocks.loadUserSecrets>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -458,7 +479,7 @@ describe('cloudSecretsPush', () => {
       rs.mocked(inquirer.prompt).mockResolvedValueOnce({
         value: 'noreply@prod.com',
       });
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -486,7 +507,7 @@ describe('cloudSecretsPush', () => {
       rs.mocked(inquirer.prompt)
         .mockResolvedValueOnce({ value: 'new-value-1' })
         .mockResolvedValueOnce({ value: '' }); // Skip second secret
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -513,6 +534,7 @@ describe('cloudSecretsPush', () => {
         if (key === 'RESEND_API_KEY') {
           throw new Error('Network error');
         }
+        return true;
       });
 
       await cloudSecretsPush({ env: 'prod' });
@@ -537,7 +559,7 @@ describe('cloudSecretsPush', () => {
       rs.mocked(inquirer.prompt)
         .mockResolvedValueOnce({ value: 'noreply@prod.com' })
         .mockResolvedValueOnce({ value: ' admin@prod.com ' });
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -569,7 +591,7 @@ describe('cloudSecretsPush', () => {
       rs.mocked(inquirer.prompt).mockResolvedValueOnce({
         value: 'noreply@prod.com',
       });
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -594,7 +616,7 @@ describe('cloudSecretsPush', () => {
       rs.mocked(inquirer.prompt).mockResolvedValueOnce({
         value: 'noreply@prod.com',
       });
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -612,7 +634,7 @@ describe('cloudSecretsPush', () => {
         secrets: { ADMIN_EMAILS: 'me@example.com' },
       } as ReturnType<typeof mocks.loadUserSecrets>);
       rs.mocked(inquirer.prompt).mockResolvedValueOnce({ value: '' });
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -639,7 +661,7 @@ describe('cloudSecretsPush', () => {
       rs.mocked(inquirer.prompt).mockResolvedValueOnce({
         value: 'noreply@prod.com',
       });
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -657,7 +679,7 @@ describe('cloudSecretsPush', () => {
         secrets: { EMAIL_FROM: 'noreply@example.com' },
       } as ReturnType<typeof mocks.loadUserSecrets>);
       mocks.buildSecretName.mockReturnValue('test-project-shared-DOMAIN');
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
 
@@ -681,7 +703,7 @@ describe('cloudSecretsPush', () => {
           ADMIN_EMAILS: 'me@example.com',
         },
       } as ReturnType<typeof mocks.loadUserSecrets>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
 
@@ -706,7 +728,7 @@ describe('cloudSecretsPush', () => {
         secrets: { RESEND_API_KEY: 're_local' },
         'api-service': { STRIPE_API_KEY: 'sk_test_local' },
       } as unknown as ReturnType<typeof mocks.loadUserSecrets>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
 
@@ -734,7 +756,7 @@ describe('cloudSecretsPush', () => {
           .fn()
           .mockResolvedValue([{ payload: { data: Buffer.from('shop.com') } }]),
       } as unknown as ReturnType<typeof createGCPClient>);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
 
@@ -752,7 +774,7 @@ describe('cloudSecretsPush', () => {
     it('should fall back to general instructions with --skip-user-secrets and no local user secrets', async () => {
       mocks.hasAuthTemplate.mockReturnValue(false);
       mocks.loadUserSecrets.mockReturnValue(null);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod', skipUserSecrets: true });
 
@@ -764,7 +786,7 @@ describe('cloudSecretsPush', () => {
     it('should handle no user secrets', async () => {
       mocks.loadUserSecrets.mockReturnValue(null);
       // Framework secrets are still pushed (KONG_SSL_VERIFY + TTLs + EMAIL_PROVIDER)
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
 
       await cloudSecretsPush({ env: 'prod' });
 
@@ -813,7 +835,7 @@ describe('cloudSecretsPush', () => {
         },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
       mocks.loadUserSecrets.mockReturnValue(null);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
     });
 
     it('should push the auth secrets to the auth-service scope in a new environment', async () => {
@@ -917,7 +939,7 @@ describe('cloudSecretsPush', () => {
         secrets: { KONG_ADMIN_KEY: 'test' },
       } as ReturnType<typeof mocks.generateFrameworkSecretsFile>);
       mocks.loadUserSecrets.mockReturnValue(null);
-      rs.mocked(cloudSecretsSet).mockResolvedValue(undefined);
+      rs.mocked(cloudSecretsSet).mockResolvedValue(true);
     });
 
     it('should show completion message and next steps', async () => {
