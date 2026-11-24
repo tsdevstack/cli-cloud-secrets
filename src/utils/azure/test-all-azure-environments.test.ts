@@ -71,6 +71,24 @@ describe('testAllAzureEnvironments', () => {
     });
   });
 
+  it('should call only the one environment it is given', async () => {
+    mocks.loadCredentialsFile.mockReturnValue({
+      dev: createMockCredentials('dev'),
+      staging: createMockCredentials('staging'),
+    });
+    mockNextPage.mockResolvedValue({ done: true });
+
+    const results = await testAllAzureEnvironments('/project', 'staging');
+
+    expect(results.map((result) => result.env)).toEqual(['staging']);
+    expect(createAzureClient).toHaveBeenCalledTimes(1);
+    expect(createAzureClient).toHaveBeenCalledWith(
+      createMockCredentials('staging'),
+      'myproject',
+      'staging',
+    );
+  });
+
   it('should return invalid result when credentials test fails', async () => {
     mocks.loadCredentialsFile.mockReturnValue({
       dev: createMockCredentials('dev'),

@@ -43,14 +43,19 @@ export async function testGCPEnvironment(
 
 /**
  * Test all GCP environments from credentials file
+ *
+ * @param onlyEnv - Test this environment only (cloud:init --env)
  */
 export async function testAllGCPEnvironments(
   projectRoot: string,
+  onlyEnv?: string,
 ): Promise<EnvTestResult[]> {
   const { loadCredentialsFile } = getContext();
   const credentialsFile = loadCredentialsFile(projectRoot, 'gcp');
 
-  const envs = Object.keys(credentialsFile);
+  const envs = Object.keys(credentialsFile).filter(
+    (env) => !onlyEnv || env === onlyEnv,
+  );
   if (envs.length === 0) {
     return [];
   }

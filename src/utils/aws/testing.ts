@@ -77,14 +77,19 @@ export async function testAWSEnvironment(
 
 /**
  * Test all AWS environments from credentials file
+ *
+ * @param onlyEnv - Test this environment only (cloud:init --env)
  */
 export async function testAllAWSEnvironments(
   projectRoot: string,
+  onlyEnv?: string,
 ): Promise<EnvTestResult[]> {
   const { loadCredentialsFile } = getContext();
   const credentialsFile = loadCredentialsFile(projectRoot, 'aws');
 
-  const envs = Object.keys(credentialsFile);
+  const envs = Object.keys(credentialsFile).filter(
+    (env) => !onlyEnv || env === onlyEnv,
+  );
   if (envs.length === 0) {
     return [];
   }

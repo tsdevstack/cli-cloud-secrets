@@ -7,8 +7,12 @@ import { createAzureClient } from './create-azure-client';
 import type { AzureCredentials } from '../types';
 import type { EnvTestResult } from '../types';
 
+/**
+ * @param onlyEnv - Test this environment only (cloud:init --env)
+ */
 export async function testAllAzureEnvironments(
   projectRoot: string,
+  onlyEnv?: string,
 ): Promise<EnvTestResult[]> {
   try {
     const { loadCredentialsFile, loadFrameworkConfig, resolveKeyVaultName } =
@@ -19,6 +23,7 @@ export async function testAllAzureEnvironments(
     const results: EnvTestResult[] = [];
 
     for (const [env, credentials] of Object.entries(allCredentials)) {
+      if (onlyEnv && env !== onlyEnv) continue;
       try {
         const azureCredentials = credentials as AzureCredentials;
         const keyVaultName = await resolveKeyVaultName(

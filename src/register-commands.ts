@@ -29,14 +29,23 @@ export function registerCloudPlugin(program: Command): void {
     .option('--gcp', 'Use Google Cloud Platform')
     .option('--aws', 'Use Amazon Web Services')
     .option('--azure', 'Use Microsoft Azure')
+    .option(
+      '-e, --env <environment>',
+      'Set up and test only this environment; the others are left alone',
+    )
     .action(
       wrapCommand(
-        async (options: { gcp?: boolean; aws?: boolean; azure?: boolean }) => {
+        async (options: {
+          gcp?: boolean;
+          aws?: boolean;
+          azure?: boolean;
+          env?: string;
+        }) => {
           let provider: string | undefined;
           if (options.gcp) provider = 'gcp';
           else if (options.aws) provider = 'aws';
           else if (options.azure) provider = 'azure';
-          await cloudInit(provider);
+          await cloudInit(provider, options.env);
         },
       ),
     );

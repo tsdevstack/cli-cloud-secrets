@@ -7,10 +7,14 @@
  * 1. Choosing cloud provider (gcp/aws/azure)
  * 2. Saving provider to config.json
  * 3. Detecting all available environments from credentials file
- * 4. Testing ALL environments and reporting results
+ * 4. Testing ALL environments (or only --env) and reporting results
  * 5. Optionally pushing existing secrets to cloud
  *
- * Usage: npx tsdevstack cloud:init [--gcp|--aws|--azure]
+ * Usage: npx tsdevstack cloud:init [--gcp|--aws|--azure] [--env <env>]
+ *
+ * With --env, only that environment is set up and tested: the others in the
+ * credentials file are not called at all (Azure's setup writes: provider
+ * registration, resource group, Key Vault).
  *
  * Prerequisites:
  * - Credentials file must exist: .tsdevstack/credentials.{provider}.json
@@ -42,7 +46,10 @@ import {
 /**
  * Main cloud:init command
  */
-export async function cloudInit(providerOption?: string): Promise<void> {
+export async function cloudInit(
+  providerOption?: string,
+  envOption?: string,
+): Promise<void> {
   const {
     logger,
     findProjectRoot,
@@ -113,6 +120,23 @@ export async function cloudInit(providerOption?: string): Promise<void> {
 
   logger.newline();
 
+  // Step 3.5: --env must name an environment of the credentials file
+  if (envOption) {
+    const envs = Object.keys(
+      loadCredentialsFile(projectRoot, selectedProvider),
+    );
+    if (!envs.includes(envOption)) {
+      logger.error(
+        `Environment "${envOption}" is not in .tsdevstack/.credentials.${selectedProvider}.json`,
+      );
+      logger.info(`Environments there: ${envs.join(', ') || 'none'}`);
+      process.exit(1);
+    }
+    logger.info(`Environment: ${envOption} (the others are left alone)`);
+    logger.newline();
+  }
+  const inScope = (env: string): boolean => !envOption || env === envOption;
+
   // Step 4: Update config.json first (before testing)
   logger.updating('Updating config.json...');
   const configPath = getConfigPath(projectRoot);
@@ -161,7 +185,7 @@ export async function cloudInit(providerOption?: string): Promise<void> {
 
     const missingRegions: string[] = [];
     for (const [env, credentials] of Object.entries(allCredentials)) {
-      if (!credentials.region) {
+      if (inScope(env) && !credentials.region) {
         missingRegions.push(env);
       }
     }
@@ -179,7 +203,7 @@ export async function cloudInit(providerOption?: string): Promise<void> {
     }
 
     // Bootstrap GCP project (enable APIs, add roles to SA)
-    const firstEnv = Object.keys(allCredentials)[0];
+    const firstEnv = envOption ?? Object.keys(allCredentials)[0];
     logger.info(
       'Bootstrapping GCP project (enabling APIs, adding permissions)...',
     );
@@ -208,6 +232,7 @@ export async function cloudInit(providerOption?: string): Promise<void> {
       const projectName = config.project.name;
 
       for (const [env, credentials] of Object.entries(allCredentials)) {
+        if (!inScope(env)) continue;
         const azureCredentials = credentials as AzureCredentials;
         logger.loading(`Setting up environment: ${env}`);
 
@@ -260,7 +285,7 @@ export async function cloudInit(providerOption?: string): Promise<void> {
     }
   }
 
-  // Step 5: Test ALL environments from credentials file
+  // Step 5: Test ALL environments from credentials file (or only --env)
   logger.checking(
     `Detecting and testing ${selectedProvider.toUpperCase()} environments...`,
   );
@@ -269,11 +294,11 @@ export async function cloudInit(providerOption?: string): Promise<void> {
   let envResults: EnvTestResult[];
 
   if (selectedProvider === 'gcp') {
-    envResults = await testAllGCPEnvironments(projectRoot);
+    envResults = await testAllGCPEnvironments(projectRoot, envOption);
   } else if (selectedProvider === 'aws') {
-    envResults = await testAllAWSEnvironments(projectRoot);
+    envResults = await testAllAWSEnvironments(projectRoot, envOption);
   } else {
-    envResults = await testAllAzureEnvironments(projectRoot);
+    envResults = await testAllAzureEnvironments(projectRoot, envOption);
   }
 
   if (envResults.length === 0) {

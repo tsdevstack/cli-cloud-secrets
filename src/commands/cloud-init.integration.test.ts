@@ -27,6 +27,7 @@ rs.mock('node:child_process', () => ({
   execSync: rs.fn(),
 }));
 
+import { execSync } from 'node:child_process';
 import inquirer from 'inquirer';
 import { cloudSecretsPush } from './cloud-secrets-push';
 import { testAllGCPEnvironments } from '../utils/gcp/testing';
@@ -470,6 +471,100 @@ describe('cloudInit', () => {
     });
   });
 
+  describe('Only one environment (--env)', () => {
+    const azureCredentials = (env: string): AzureCredentials => ({
+      subscriptionId: `sub-${env}`,
+      tenantId: 'tenant-123',
+      clientId: 'client-123',
+      clientSecret: `secret-${env}`,
+      location: 'swedencentral',
+    });
+
+    beforeEach(() => {
+      mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
+      mocks.loadFrameworkConfig.mockReturnValue(
+        mockConfig as ReturnType<typeof mocks.loadFrameworkConfig>,
+      );
+      mocks.getConfigPath.mockReturnValue(mockConfigPath);
+      mocks.readJsonFile.mockReturnValue({ cloud: {} });
+      mocks.validateDuplicateCredentials.mockReturnValue(undefined);
+      rs.mocked(inquirer.prompt).mockResolvedValueOnce({ pushSecrets: false });
+    });
+
+    it('should set up and test only that Azure environment', async () => {
+      const allCredentials = {
+        az4: azureCredentials('az4'),
+        az7: azureCredentials('az7'),
+      };
+      mocks.loadCredentialsFile.mockReturnValue(allCredentials);
+      rs.mocked(registerResourceProviders).mockResolvedValue({
+        success: true,
+        registering: [],
+        unregistered: [],
+      });
+      mocks.ensureKeyVaultExists.mockResolvedValue({
+        exists: true,
+        created: true,
+      });
+      rs.mocked(testAllAzureEnvironments).mockResolvedValue([
+        { env: 'az7', valid: true },
+      ]);
+
+      await cloudInit('azure', 'az7');
+
+      expect(registerResourceProviders).toHaveBeenCalledTimes(1);
+      expect(registerResourceProviders).toHaveBeenCalledWith(
+        allCredentials.az7,
+      );
+      expect(mocks.ensureKeyVaultExists).toHaveBeenCalledTimes(1);
+      expect(mocks.ensureKeyVaultExists).toHaveBeenCalledWith(
+        'test-project',
+        'az7',
+        allCredentials.az7,
+      );
+      expect(testAllAzureEnvironments).toHaveBeenCalledWith(
+        mockProjectRoot,
+        'az7',
+      );
+    });
+
+    it('should bootstrap and test only that GCP environment', async () => {
+      mocks.loadCredentialsFile.mockReturnValue({
+        dev: { region: 'us-central1' },
+        prod: { region: 'europe-west1' },
+      });
+      rs.mocked(testAllGCPEnvironments).mockResolvedValue([
+        { env: 'prod', valid: true },
+      ]);
+
+      await cloudInit('gcp', 'prod');
+
+      expect(execSync).toHaveBeenCalledWith(
+        'npx tsdevstack infra:bootstrap --env prod',
+        expect.anything(),
+      );
+      expect(testAllGCPEnvironments).toHaveBeenCalledWith(
+        mockProjectRoot,
+        'prod',
+      );
+    });
+
+    it('should stop on an environment that is not in the credentials file, before changing anything', async () => {
+      mocks.loadCredentialsFile.mockReturnValue({
+        az7: azureCredentials('az7'),
+      });
+
+      await expect(cloudInit('azure', 'az8')).rejects.toThrow('process.exit');
+
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        'Environment "az8" is not in .tsdevstack/.credentials.azure.json',
+      );
+      expect(mocks.logger.info).toHaveBeenCalledWith('Environments there: az7');
+      expect(mocks.writeJsonFile).not.toHaveBeenCalled();
+      expect(registerResourceProviders).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Environment testing', () => {
     beforeEach(() => {
       mocks.findProjectRoot.mockReturnValue(mockProjectRoot);
@@ -494,7 +589,10 @@ describe('cloudInit', () => {
 
       await cloudInit('gcp');
 
-      expect(testAllGCPEnvironments).toHaveBeenCalledWith(mockProjectRoot);
+      expect(testAllGCPEnvironments).toHaveBeenCalledWith(
+        mockProjectRoot,
+        undefined,
+      );
       expect(mocks.logger.info).toHaveBeenCalledWith(
         '2 environments detected: dev, staging',
       );
@@ -517,7 +615,10 @@ describe('cloudInit', () => {
 
       await cloudInit('aws');
 
-      expect(testAllAWSEnvironments).toHaveBeenCalledWith(mockProjectRoot);
+      expect(testAllAWSEnvironments).toHaveBeenCalledWith(
+        mockProjectRoot,
+        undefined,
+      );
       expect(mocks.logger.info).toHaveBeenCalledWith(
         '2 environments detected: dev, prod',
       );
@@ -544,7 +645,10 @@ describe('cloudInit', () => {
 
       await cloudInit('azure');
 
-      expect(testAllAzureEnvironments).toHaveBeenCalledWith(mockProjectRoot);
+      expect(testAllAzureEnvironments).toHaveBeenCalledWith(
+        mockProjectRoot,
+        undefined,
+      );
     });
 
     it('should handle mixed valid and invalid environments', async () => {
